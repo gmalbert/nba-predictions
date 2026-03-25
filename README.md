@@ -27,65 +27,6 @@ A Streamlit-powered data analytics platform for NBA game predictions and DraftKi
 | **ML Models** | scikit-learn, XGBoost, LightGBM |
 | **Visualization** | Plotly, Matplotlib, Seaborn |
 
-## Setup
-
-### Prerequisites
-- Python 3.10+
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/gmalbert/nba-predictions.git
-cd nba-predictions
-
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# Windows:
-venv\Scripts\activate
-# macOS/Linux:
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
-### Run Locally
-
-```bash
-streamlit run predictions.py
-```
-
-## Deployment
-
-This app is deployed on **Streamlit Cloud**. To deploy your own instance:
-
-1. Push the repo to GitHub
-2. Go to [share.streamlit.io](https://share.streamlit.io)
-3. Connect your repo and set `predictions.py` as the entry point
-4. Add any API keys in the Streamlit Cloud Secrets settings
-
-## Project Structure
-
-```
-nba-predictions/
-├── .streamlit/              # Streamlit theme configuration
-├── data_files/
-│   └── logo.png             # Site logo
-├── docs/                    # Project roadmap & documentation
-│   ├── data_sources.md      # Data sourcing strategy
-│   ├── features.md          # Feature engineering plan
-│   ├── layout.md            # Site layout & UX design
-│   ├── models.md            # ML models & training strategy
-│   └── predictions.md       # Prediction methodology
-├── pages/                   # Streamlit multi-page app (coming soon)
-├── predictions.py           # Main Streamlit entry point
-├── requirements.txt         # Python dependencies
-└── README.md
-```
-
 ## Roadmap
 
 See the [docs/](docs/) folder for detailed planning:
@@ -96,6 +37,17 @@ See the [docs/](docs/) folder for detailed planning:
 - [Models](docs/models.md) — ML model selection, training, and evaluation
 - [Predictions](docs/predictions.md) — Game outcome and Pick 6 prediction methodology
 
-## License
+## Latest updates (2026-03-24)
 
-This project is for informational and entertainment purposes only. Please gamble responsibly.
+- Referee assignments now use `nba_official` as primary source with ESPN fallback; eliminated duplicates (e.g. J.T. Orr / JT Orr mismatch), and dropped `ESPN_GAME_ID` from schema.
+- Added workflow `.github/workflows/referee-assignments.yml` scheduled at `0 16 * * *` (11 AM ET) and manual `workflow_dispatch`.
+- Implemented `scripts/preload_cache.py` to prewarm parquet cache + run predictions; integrated into `.github/workflows/nightly-pipeline.yml`.
+- Added `get_today_predictions()` and `run_and_cache_predictions()` in `utils/data_fetcher.py`.
+- Added disk cache for `get_standings()` with same-day freshness guard in `utils/data_fetcher.py`.
+- Fixed injury report team field parsing in `get_injury_report()` (`team_entry.displayName` instead of nested `team.displayName`).
+- Moved injury report section to top-level in `pages/1_Game_Predictions.py` so it renders independent of prediction success.
+- Verified and corrected column mapping in Streamlit UI:
+  - `pages/3_Team_Stats.py`: standings columns `HOME`, `ROAD`, `L10`, `strCurrentStreak` (real API fields), plus humanized labels.
+  - `pages/4_Player_Stats.py`: renamed game log columns with confirmed fields (`GAME_DATE`, `MATCHUP`, `WL`, `FG_PCT`, etc.).
+  - `pages/1_Game_Predictions.py`: injury report title-case columns and include team correctly.
+- Added a robust data verification process to inspect actual parquet schema before renaming columns (avoid assumptions).

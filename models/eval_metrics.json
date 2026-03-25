@@ -1,0 +1,8 @@
+{
+  "accuracy": 0.6346,
+  "log_loss": 0.6484,
+  "brier_score": 0.2281,
+  "eval_date": "2026-03-23T20:40:23.709038",
+  "train_games": 3690,
+  "test_games": 2285
+}

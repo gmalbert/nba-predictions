@@ -1,0 +1,115 @@
+name: Refresh Referee Assignments
+
+# Runs daily at 11:00 AM ET (16:00 UTC) during the NBA regular season.
+# The official.nba.com referee-assignments page is updated around 9 AM ET,
+# so this gives a comfortable buffer.  Also re-runs the prediction preload
+# so page 1 picks up the fresh referee data immediately.
+
+on:
+  schedule:
+    # 16:00 UTC = 11:00 AM ET (12:00 PM EDT when DST is active)
+    - cron: '0 16 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Run even if outside NBA season (true/false)'
+        required: false
+        default: 'false'
+
+jobs:
+  refresh-refs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      # ── Season gate ───────────────────────────────────────────────────────────
+      - name: Check NBA season window
+        id: season_check
+        run: |
+          python3 - <<'EOF'
+          from datetime import datetime
+          import os
+
+          now   = datetime.utcnow()
+          month = now.month
+          day   = now.day
+          force = "${{ github.event.inputs.force }}" == "true"
+
+          in_season = (
+              (month == 10 and day >= 15) or
+              (month in [11, 12, 1, 2, 3]) or
+              (month == 4 and day <= 20)
+          )
+
+          active = in_season or force
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"active={str(active).lower()}\n")
+
+          print(f"Date: {now.date()}  in_season={in_season}  force={force}  active={active}")
+          EOF
+
+      - name: Skip if outside NBA season
+        if: steps.season_check.outputs.active == 'false'
+        run: echo "Outside NBA season window — skipping."
+
+      # ── Python setup ──────────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        if: steps.season_check.outputs.active == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        if: steps.season_check.outputs.active == 'true'
+        run: |
+          pip install --upgrade pip
+          grep -v 'playwright' requirements.txt > /tmp/requirements_refs.txt
+          pip install -r /tmp/requirements_refs.txt
+
+      # ── Scrape referee assignments ────────────────────────────────────────────
+      - name: Scrape today's referee assignments
+        if: steps.season_check.outputs.active == 'true'
+        run: python scripts/scrape_external.py --source refs --refresh
+        continue-on-error: true
+
+      # ── Refresh predictions (incorporates latest referee data) ────────────────
+      - name: Preload predictions cache
+        if: steps.season_check.outputs.active == 'true'
+        run: |
+          # Force-remove today's prediction cache so it rebuilds with fresh ref data
+          python3 -c "
+          from pathlib import Path
+          from datetime import datetime
+          today = datetime.today().strftime('%Y-%m-%d')
+          p = Path('data_files/historical') / f'predictions_{today}.parquet'
+          if p.exists():
+              p.unlink()
+              print(f'Removed stale predictions cache: {p.name}')
+          "
+          python scripts/preload_cache.py --preds-only
+        continue-on-error: true
+
+      # ── Commit ────────────────────────────────────────────────────────────────
+      - name: Commit updated data
+        if: steps.season_check.outputs.active == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name  "github-actions[bot]"
+          git add data_files/historical/
+          if git diff --staged --quiet; then
+            echo "No data changes to commit."
+          else
+            DATE=$(date -u +%Y-%m-%d)
+            git commit -m "chore: referee assignments + predictions refresh ${DATE} [skip ci]"
+            git push
+            echo "Committed and pushed."
+          fi
