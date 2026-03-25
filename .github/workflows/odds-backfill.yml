@@ -1,0 +1,91 @@
+name: NBA Odds Backfill
+
+# Manual backfill of historical odds for a full season or date range.
+# Run this once to populate historical odds data; nightly-pipeline.yml
+# handles incremental daily updates going forward.
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: 'Season to backfill (e.g. 2024-25). Leave blank to use start/end.'
+        required: false
+        default: ''
+      start_date:
+        description: 'Start date YYYY-MM-DD (use with end_date)'
+        required: false
+        default: ''
+      end_date:
+        description: 'End date YYYY-MM-DD (use with start_date)'
+        required: false
+        default: ''
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360   # up to 6 hours for a full season backfill
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          grep -v 'playwright' requirements.txt > /tmp/requirements_backfill.txt
+          pip install -r /tmp/requirements_backfill.txt
+
+      - name: Validate inputs
+        run: |
+          python3 - <<'EOF'
+          season     = "${{ github.event.inputs.season }}"
+          start_date = "${{ github.event.inputs.start_date }}"
+          end_date   = "${{ github.event.inputs.end_date }}"
+
+          if not season and not (start_date and end_date):
+              raise ValueError(
+                  "Provide either 'season' OR both 'start_date' and 'end_date'."
+              )
+          print(f"Backfill params: season={season!r}  start={start_date!r}  end={end_date!r}")
+          EOF
+
+      - name: Run backfill
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          SEASON="${{ github.event.inputs.season }}"
+          START="${{ github.event.inputs.start_date }}"
+          END="${{ github.event.inputs.end_date }}"
+
+          if [ -n "$SEASON" ]; then
+            echo "Backfilling season: $SEASON"
+            python scripts/fetch_historical_odds.py --season "$SEASON"
+          else
+            echo "Backfilling date range: $START to $END"
+            python scripts/fetch_historical_odds.py --start "$START" --end "$END"
+          fi
+
+      - name: Commit backfilled data
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name  "github-actions[bot]"
+          git add data_files/historical/
+          if git diff --staged --quiet; then
+            echo "No new data to commit."
+          else
+            LABEL="${{ github.event.inputs.season || github.event.inputs.start_date }}"
+            git commit -m "chore: backfill odds data ${LABEL} [skip ci]"
+            git push
+            echo "Backfill data committed."
+          fi

@@ -1,0 +1,139 @@
+name: NBA Nightly Data Pipeline
+
+# Runs nightly during the NBA regular season (approx Oct 22 – Apr 13).
+# Also available for on-demand runs via workflow_dispatch.
+
+on:
+  schedule:
+    # 10:00 UTC = 5:00 AM ET — before most markets open, after overnight odds settle
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Date to fetch (YYYY-MM-DD). Leave blank for today.'
+        required: false
+        default: ''
+      force:
+        description: 'Run even if outside NBA season (true/false)'
+        required: false
+        default: 'false'
+
+jobs:
+  nightly-pipeline:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to commit updated parquet files back to repo
+
+    steps:
+      # ── Checkout ─────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      # ── Check if we're in the NBA season ────────────────────────────────────
+      - name: Check NBA season window
+        id: season_check
+        run: |
+          python3 - <<'EOF'
+          from datetime import datetime
+          import os
+
+          now   = datetime.utcnow()
+          month = now.month
+          day   = now.day
+          force = "${{ github.event.inputs.force }}" == "true"
+
+          # Regular season: late October through mid-April
+          # month 10 (Oct 15+) through month 4 (Apr 20)
+          in_season = (
+              (month == 10 and day >= 15) or
+              (month in [11, 12, 1, 2, 3]) or
+              (month == 4 and day <= 20)
+          )
+
+          active = in_season or force
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"active={str(active).lower()}\n")
+
+          print(f"Date: {now.date()}  month={month} day={day}")
+          print(f"In NBA season: {in_season}  Force: {force}  Will run: {active}")
+          EOF
+
+      # ── Early exit if outside season ─────────────────────────────────────────
+      - name: Skip if outside NBA season
+        if: steps.season_check.outputs.active == 'false'
+        run: |
+          echo "Outside NBA season window — skipping pipeline."
+          echo "Use workflow_dispatch with force=true to override."
+
+      # ── Python setup ─────────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        if: steps.season_check.outputs.active == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        if: steps.season_check.outputs.active == 'true'
+        run: |
+          pip install --upgrade pip
+          # Install without playwright (not needed for data scripts)
+          grep -v 'playwright' requirements.txt > /tmp/requirements_nightly.txt
+          pip install -r /tmp/requirements_nightly.txt
+
+      # ── Fetch today's odds ────────────────────────────────────────────────────
+      - name: Fetch NBA odds (sbrscrape + Odds API fallback)
+        if: steps.season_check.outputs.active == 'true'
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          DATE_ARG=""
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            DATE_ARG="--date ${{ github.event.inputs.date }}"
+          fi
+          python scripts/fetch_historical_odds.py $DATE_ARG
+        continue-on-error: true   # don't fail the whole pipeline if odds fetch fails
+
+      # ── Scrape nbastuffer stats (no playwright needed for nbastuffer) ─────────
+      - name: Scrape nbastuffer team & player stats
+        if: steps.season_check.outputs.active == 'true'
+        run: |
+          python scripts/scrape_external.py --source nbastuffer --season 2025-26
+        continue-on-error: true
+
+      # ── Scrape referee assignments ────────────────────────────────────────────
+      - name: Scrape today's referee assignments
+        if: steps.season_check.outputs.active == 'true'
+        run: |
+          python scripts/scrape_external.py --source refs
+        continue-on-error: true
+
+      # ── Refresh current-season nba_api parquets + pre-run predictions ─────────
+      # Deletes stale current-season parquets and re-fetches from NBA API,
+      # then runs the ML prediction pipeline for today's games so page 1
+      # loads instantly from disk rather than re-running models on every visit.
+      - name: Preload page caches
+        if: steps.season_check.outputs.active == 'true'
+        run: |
+          python scripts/preload_cache.py
+        continue-on-error: true
+
+      # ── Commit updated data files ─────────────────────────────────────────────
+      - name: Commit updated data
+        if: steps.season_check.outputs.active == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name  "github-actions[bot]"
+          git add data_files/historical/
+          # Only commit if there are actual changes
+          if git diff --staged --quiet; then
+            echo "No data changes to commit."
+          else
+            DATE=$(date -u +%Y-%m-%d)
+            git commit -m "chore: nightly data update ${DATE} [skip ci]"
+            git push
+            echo "Data committed and pushed."
+          fi
