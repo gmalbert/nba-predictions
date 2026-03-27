@@ -114,7 +114,31 @@ def refresh_standings(season: str, hist_dir: Path):
         log.warning(f"  [standings] FAILED: {exc}")
 
 
-# ── Step 3: Game predictions ──────────────────────────────────────────────────
+# ── Step 3: Training datasets ─────────────────────────────────────────────────
+
+def refresh_training_datasets(seasons: list, hist_dir: Path):
+    """Pre-build feature-engineered training parquets for all historical seasons."""
+    from utils.feature_engine import get_training_dataset
+    from utils.data_fetcher import HIST_DIR
+
+    log.info("── Training datasets ──")
+    for season in seasons:
+        slug = season.replace("-", "_")
+        path = hist_dir / f"training_dataset_{slug}_Regular_Season.parquet"
+        if path.exists():
+            log.info(f"  [training/{season}] already cached — skipping")
+            continue
+        log.info(f"  [training/{season}] building ...")
+        try:
+            df = get_training_dataset(season)
+            rows = len(df) if not df.empty else 0
+            log.info(f"  [training/{season}] {rows} rows ✓")
+        except Exception as exc:
+            log.warning(f"  [training/{season}] FAILED: {exc}")
+        time.sleep(0.3)
+
+
+# ── Step 4: Game predictions ──────────────────────────────────────────────────
 
 def refresh_predictions(hist_dir: Path):
     """Pre-run today's prediction pipeline and save to disk."""
@@ -149,7 +173,7 @@ def main():
     )
     args = parser.parse_args()
 
-    from utils.data_fetcher import CURRENT_SEASON, HIST_DIR
+    from utils.data_fetcher import CURRENT_SEASON, HIST_DIR, HISTORICAL_SEASONS
 
     log.info("=" * 60)
     log.info(f"Cache preload  —  {TODAY}")
@@ -158,6 +182,7 @@ def main():
     if not args.preds_only:
         refresh_current_season(CURRENT_SEASON, HIST_DIR)
         refresh_standings(CURRENT_SEASON, HIST_DIR)
+        refresh_training_datasets(HISTORICAL_SEASONS, HIST_DIR)
 
     if not args.no_preds:
         refresh_predictions(HIST_DIR)

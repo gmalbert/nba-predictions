@@ -1,5 +1,8 @@
 # Data Sources
 
+## Status
+- [x] Complete
+
 ## Primary: nba_api
 
 The [`nba_api`](https://github.com/swar/nba_api) Python package is our primary data source, providing access to the full suite of NBA.com stats endpoints.

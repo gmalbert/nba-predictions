@@ -9,8 +9,9 @@ import joblib
 from pathlib import Path
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import accuracy_score, log_loss, brier_score_loss
+from sklearn.metrics import accuracy_score, log_loss, brier_score_loss, mean_absolute_error
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 import xgboost as xgb
@@ -402,3 +403,161 @@ def load_eval_metrics() -> dict:
             return json.load(f)
     except Exception:
         return {}
+
+
+# ── Over/Under (Totals) Model ──────────────────────────────────────────────────
+
+# Feature columns for the game-total regression model.
+# Predicts TOTAL_PTS (home_pts + away_pts); optionally enriched with OU_LINE.
+FEATURE_COLS_TOTALS = [
+    "home_PTS_L10",        "away_PTS_L10",
+    "home_FG3_PCT_L10",    "away_FG3_PCT_L10",
+    "home_TOV_L10",        "away_TOV_L10",
+    "home_REB_L10",        "away_REB_L10",
+    "home_AST_L10",        "away_AST_L10",
+    "home_REST_DAYS",      "away_REST_DAYS",
+    "home_IS_B2B",         "away_IS_B2B",
+    "pts_diff_L10",
+    "total_consensus",     # consensus OU line from sbrscrape (NaN when unavailable)
+]
+
+
+def train_totals_model(
+    df: pd.DataFrame,
+    feature_cols: list[str] | None = None,
+) -> xgb.XGBRegressor:
+    """
+    Train an XGBoost regression model to predict game total points.
+
+    Parameters
+    ----------
+    df : training DataFrame from build_training_dataset() with TOTAL_PTS column.
+    feature_cols : override default FEATURE_COLS_TOTALS if provided.
+
+    Returns fitted XGBRegressor.
+    """
+    cols = feature_cols or FEATURE_COLS_TOTALS
+    avail = [c for c in cols if c in df.columns]
+    target_col = "TOTAL_PTS"
+    if target_col not in df.columns:
+        raise ValueError("DataFrame must contain 'TOTAL_PTS' column. Run build_training_dataset() first.")
+
+    subset = df.dropna(subset=[target_col]).copy()
+    X = subset[avail].fillna(subset[avail].median()).astype(float)
+    y = subset[target_col].astype(float)
+
+    model = xgb.XGBRegressor(
+        max_depth=4,
+        learning_rate=0.05,
+        n_estimators=300,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_alpha=0.1,
+        reg_lambda=5,
+        random_state=42,
+        verbosity=0,
+    )
+    model.fit(X, y)
+    return model
+
+
+def evaluate_totals_model(
+    model: xgb.XGBRegressor,
+    df: pd.DataFrame,
+    feature_cols: list[str] | None = None,
+) -> dict:
+    """Evaluate totals model on a held-out DataFrame. Returns MAE and directional accuracy."""
+    cols = feature_cols or FEATURE_COLS_TOTALS
+    avail = [c for c in cols if c in df.columns]
+    subset = df.dropna(subset=["TOTAL_PTS"]).copy()
+    if subset.empty:
+        return {}
+    X = subset[avail].fillna(0).astype(float)
+    y_true = subset["TOTAL_PTS"].values
+    y_pred = model.predict(X)
+    mae = float(mean_absolute_error(y_true, y_pred))
+
+    # Directional accuracy vs consensus line when available
+    dir_acc: float | None = None
+    if "total_consensus" in subset.columns:
+        lines = subset["total_consensus"].values
+        valid = ~np.isnan(lines)
+        if valid.sum() > 10:
+            actual_over = y_true[valid] > lines[valid]
+            pred_over   = y_pred[valid] > lines[valid]
+            dir_acc = float(np.mean(actual_over == pred_over))
+
+    return {
+        "totals_mae":          round(mae, 2),
+        "totals_dir_accuracy": round(dir_acc, 4) if dir_acc is not None else None,
+    }
+
+
+def save_totals_model(model: xgb.XGBRegressor, suffix: str = "latest") -> Path:
+    """Save totals regression model to models/totals_{suffix}.pkl."""
+    path = MODEL_DIR / f"totals_{suffix}.pkl"
+    joblib.dump(model, path)
+    return path
+
+
+def load_totals_model(suffix: str = "latest") -> xgb.XGBRegressor | None:
+    """Load the saved totals model. Returns None if not found."""
+    path = MODEL_DIR / f"totals_{suffix}.pkl"
+    if not path.exists():
+        return None
+    try:
+        return joblib.load(path)
+    except Exception:
+        return None
+
+
+# ── Probability Calibration ────────────────────────────────────────────────────
+
+def calibrate_models(
+    models: dict,
+    X_cal: pd.DataFrame,
+    y_cal: pd.Series,
+    method: str = "isotonic",
+) -> dict:
+    """
+    Wrap each base model with CalibratedClassifierCV (cv='prefit') using a
+    held-out calibration set.
+
+    This makes predicted probabilities more reliable for EV/Kelly calculations.
+    Returns a new dict of calibrated models (keyed by model name).
+    """
+    calibrated: dict = {}
+    for name, model in models.items():
+        try:
+            cal = CalibratedClassifierCV(estimator=model, cv="prefit", method=method)
+            cal.fit(X_cal, y_cal)
+            calibrated[name] = cal
+        except Exception:
+            calibrated[name] = model  # fall back to uncalibrated if wrapping fails
+    return calibrated
+
+
+def save_calibrated_models(models: dict, suffix: str = "latest") -> dict:
+    """Save calibrated models to models/{name}_game_cal_{suffix}.pkl."""
+    saved = {}
+    for name, model in models.items():
+        path = MODEL_DIR / f"{name}_game_cal_{suffix}.pkl"
+        joblib.dump(model, path)
+        saved[name] = str(path)
+    return saved
+
+
+def load_calibrated_models(suffix: str = "latest") -> dict:
+    """Load calibrated models. Falls back to uncalibrated if unavailable."""
+    models = {}
+    for name in ["logistic", "xgboost", "lightgbm", "random_forest"]:
+        cal_path  = MODEL_DIR / f"{name}_game_cal_{suffix}.pkl"
+        base_path = MODEL_DIR / f"{name}_game_{suffix}.pkl"
+        for p in (cal_path, base_path):
+            if p.exists():
+                try:
+                    models[name] = joblib.load(p)
+                    break
+                except Exception:
+                    pass
+    return models

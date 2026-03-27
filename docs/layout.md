@@ -1,5 +1,8 @@
 # Streamlit Site Layout
 
+## Status
+- [x] Complete
+
 This document describes the page structure, navigation, and UX design for the NBA Predictions Streamlit application.
 
 ---

@@ -1,5 +1,8 @@
 # Fix: Streamlit Emoji Filenames Failing on macOS / Docker
 
+## Status
+- [x] Complete
+
 ## Problem
 
 Streamlit page files with emoji in their names (e.g. `4_💰_Value_Finder.py`) cause a

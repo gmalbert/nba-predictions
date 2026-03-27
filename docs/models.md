@@ -1,5 +1,13 @@
 # Models
 
+- [x] Elo Rating System
+- [x] Logistic Regression
+- [x] XGBoost
+- [x] LightGBM
+- [x] Random Forest
+- [x] Ensemble
+- [ ] Neural Network (optional)
+
 This document outlines the machine learning models, training strategies, and evaluation methods for NBA game outcome and Pick 6 predictions.
 
 ---

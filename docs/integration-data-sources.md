@@ -26,6 +26,14 @@
 
 ---
 
+## Status / - [x] Completed in code
+
+- [x] `scripts/fetch_historical_odds.py` exists and fetches sbrscrape odds
+- [x] `config/seasons.toml` exists and holds season date ranges
+- [x] `HISTORICAL_SEASONS` expanded in `utils/data_fetcher.py`
+- [x] `scripts/daily_update.py` created for scheduled pipeline
+- [x] `run_and_cache_predictions()` in `utils/data_fetcher.py` caches predictions to parquet
+
 ## Integration Recommendations
 
 ### 1. Historical Odds Database

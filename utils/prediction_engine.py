@@ -32,6 +32,8 @@ from utils.model_utils import (
     EloSystem,
     MODEL_DIR,
     FEATURE_COLS_GAME,
+    load_totals_model,
+    FEATURE_COLS_TOTALS,
 )
 
 # DraftKings Pick 6 payout multipliers
@@ -191,6 +193,76 @@ def predict_today_games(
         })
 
     return pd.DataFrame(results)
+
+
+# ── Over/Under (Totals) Prediction ────────────────────────────────────────────
+
+def predict_total_points(
+    home_row: pd.Series,
+    away_row: pd.Series,
+    total_model=None,
+    consensus_line: float | None = None,
+) -> dict:
+    """
+    Predict total points for a single game and compute over/under signal.
+
+    Parameters
+    ----------
+    home_row / away_row : Latest feature row from engineer_team_features()
+    total_model         : Fitted XGBRegressor from load_totals_model()
+    consensus_line      : Sportsbook consensus total (from sbrscrape)
+
+    Returns dict with:
+        predicted_total, consensus_line, direction ('OVER'/'UNDER'/'—'),
+        margin (predicted_total − consensus_line), confidence (0-1)
+    """
+    if total_model is None:
+        total_model = load_totals_model()
+    if total_model is None:
+        return {
+            "predicted_total": None,
+            "consensus_line": consensus_line,
+            "direction": "—",
+            "margin": None,
+            "confidence": None,
+        }
+
+    from utils.feature_engine import build_game_feature_vector
+    fv = build_game_feature_vector(home_row, away_row)
+
+    # Add consensus line as a feature (NaN if unavailable)
+    fv["total_consensus"] = consensus_line if consensus_line is not None else float("nan")
+
+    avail = [c for c in FEATURE_COLS_TOTALS if c in fv.index]
+    X = pd.DataFrame([fv[avail].fillna(0)])
+
+    try:
+        predicted_total = float(total_model.predict(X)[0])
+    except Exception:
+        return {
+            "predicted_total": None,
+            "consensus_line": consensus_line,
+            "direction": "—",
+            "margin": None,
+            "confidence": None,
+        }
+
+    result: dict = {
+        "predicted_total": round(predicted_total, 1),
+        "consensus_line":  consensus_line,
+        "direction":       "—",
+        "margin":          None,
+        "confidence":      None,
+    }
+
+    if consensus_line is not None and consensus_line > 0:
+        margin = predicted_total - consensus_line
+        result["margin"]    = round(margin, 1)
+        result["direction"] = "OVER" if margin > 0 else "UNDER"
+        # Confidence proportional to magnitude of margin (3 pts ≈ moderate)
+        result["confidence"] = round(min(abs(margin) / 6.0, 1.0), 2)
+
+    return result
 
 
 # ── Player Prop Predictions ────────────────────────────────────────────────────

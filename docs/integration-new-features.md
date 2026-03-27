@@ -5,6 +5,17 @@
 
 ---
 
+## Status / - [x] Completed in code
+
+- [x] Odds-derived feature set added (`IMPLIED_PROB_HOME`, `IMPLIED_PROB_AWAY`, `spread_consensus`, `total_consensus`, `odds_disagreement_ml`, `odds_disagreement_total`)
+- [x] Day-rest and team trends already included via nbastuffer features
+- [x] EV display added to `pages/1_Game_Predictions.py`
+- [x] O/U display added to `pages/1_Game_Predictions.py` via `predict_total_points()`
+- [x] Multi-book odds table added `pages/1_Game_Predictions.py`, using `get_multi_book_odds()` + `get_best_lines()`
+- [x] Calibration/ROI/P&L charts added to `pages/5_Model_Performance.py`
+
+---
+
 ## 1. Odds-Derived Features for Models
 
 **Their approach:** The training dataset (`Create_Games.py`) includes the sportsbook Over/Under line as a direct feature. This gives the model "market wisdom" — the OU line itself encodes information the books have about each matchup.

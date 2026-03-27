@@ -1,5 +1,8 @@
 # Feature Engineering
 
+## Status
+- [x] Complete
+
 This document outlines all features to be engineered for NBA game outcome and Pick 6 prediction models.
 
 ---
