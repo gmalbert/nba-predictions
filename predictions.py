@@ -39,10 +39,16 @@ def home_page():
     """Dashboard-style landing page."""
     from utils.data_fetcher import (
         get_today_predictions,
-        get_standings,
+        get_multi_book_odds,
+        get_best_lines,
+        expected_value,
+        kelly_criterion,
         CURRENT_SEASON,
     )
-    from utils.model_utils import load_eval_metrics
+    from utils.model_utils import load_eval_metrics, load_totals_model
+    from utils.prediction_engine import predict_total_points
+    from utils.feature_engine import engineer_team_features
+    from utils.data_fetcher import get_league_game_log_cached
 
     # ── Header ────────────────────────────────────────────────────────────────
     hdr_left, hdr_right = st.columns([1, 4])
@@ -131,99 +137,199 @@ def home_page():
                         fav_label = home if hp >= 0.5 else away
                         st.caption(f"Pick: {fav_label}")
 
-        # ── Right: top picks + standings ──────────────────────────────────────
+        # ── Right: best bets ──────────────────────────────────────────────────
         with right_col:
-            high_df = preds_df[preds_df["confidence"] == "High"]
-            if not high_df.empty:
-                st.markdown("### ⭐ Top Picks")
+            st.markdown("### 🏆 Best Bets Today")
+
+            # Load models + odds (all cached — fast on subsequent renders)
+            import numpy as np
+            totals_model = load_totals_model()
+            multi_odds_raw  = get_multi_book_odds()
+            best_lines_list = get_best_lines(multi_odds_raw) if multi_odds_raw else []
+
+            def _tk(name: str) -> str:
+                return name.split()[-1].lower()
+
+            full_odds_lkp  = {_tk(g.get("home_team", "")): g for g in multi_odds_raw}
+            best_lines_lkp = {_tk(bl["home_team"]): bl for bl in best_lines_list}
+
+            # Build team feature map for O/U (needs game log; cached separately)
+            @st.cache_data(ttl=3600)
+            def _home_feat_map(season: str) -> dict:
+                gl = get_league_game_log_cached(season)
+                if gl.empty:
+                    return {}
+                result: dict = {}
+                for tid, grp in gl.groupby("TEAM_ID"):
+                    feats = engineer_team_features(grp.sort_values("GAME_DATE"))
+                    if not feats.empty:
+                        result[int(tid)] = feats.sort_values("GAME_DATE").iloc[-1]
+                return result
+
+            team_feat_map = _home_feat_map(CURRENT_SEASON) if totals_model is not None else {}
+
+            # ── Score every game for each market ─────────────────────────────
+            ml_picks, spread_picks, ou_picks = [], [], []
+
+            for _, g in preds_df.iterrows():
+                home = g.get("home_team", "Home")
+                away = g.get("away_team", "Away")
+                hp   = float(g.get("home_win_prob", 0.5))
+                ap   = 1.0 - hp
+                conf = g.get("confidence", "Low")
+                pred_spread = g.get("predicted_spread")
+                hid  = g.get("home_team_id")
+                aid  = g.get("away_team_id")
+                hk   = _tk(home)
+                bl   = best_lines_lkp.get(hk)
+                go   = full_odds_lkp.get(hk)
+
+                # ─ ML EV ────────────────────────────────────────────────────
+                if bl:
+                    bhml = bl.get("best_home_ml")
+                    baml = bl.get("best_away_ml")
+                    if bhml is not None:
+                        ev = expected_value(hp, bhml)
+                        ml_picks.append({
+                            "game": f"{away} @ {home}", "pick": f"{home} ML",
+                            "odds": bhml, "book": bl.get("best_home_ml_book", ""),
+                            "ev": ev, "prob": hp, "conf": conf, "score": ev,
+                        })
+                    if baml is not None:
+                        ev = expected_value(ap, baml)
+                        ml_picks.append({
+                            "game": f"{away} @ {home}", "pick": f"{away} ML",
+                            "odds": baml, "book": bl.get("best_away_ml_book", ""),
+                            "ev": ev, "prob": ap, "conf": conf, "score": ev,
+                        })
+
+                # ─ Spread cover ─────────────────────────────────────────────
+                if go and pred_spread is not None:
+                    try:
+                        sp_vals = [v for v in (go.get("home_spread") or {}).values() if v is not None]
+                        if sp_vals:
+                            cons_sp = float(np.mean(sp_vals))
+                            edge = float(pred_spread) + cons_sp  # pos = home covers
+                            if edge > 0:
+                                pick = f"{home} {cons_sp:+.1f}"
+                                cover_who = home
+                            else:
+                                pick = f"{away} +{abs(cons_sp):.1f}"
+                                cover_who = away
+                            spread_picks.append({
+                                "game": f"{away} @ {home}", "pick": pick,
+                                "cover": cover_who, "edge": abs(edge),
+                                "pred": float(pred_spread), "line": cons_sp,
+                                "conf": conf, "score": abs(edge),
+                            })
+                    except (TypeError, ValueError):
+                        pass
+
+                # ─ O/U ──────────────────────────────────────────────────────
+                if totals_model is not None and hid and aid:
+                    h_feat = team_feat_map.get(int(hid))
+                    a_feat = team_feat_map.get(int(aid))
+                    if h_feat is not None and a_feat is not None:
+                        tot_vals = [v for v in (go or {}).get("total", {}).values() if v is not None]
+                        cons_line = float(np.mean(tot_vals)) if tot_vals else None
+                        ou = predict_total_points(h_feat, a_feat, totals_model, cons_line)
+                        if ou.get("direction") in ("OVER", "UNDER") and ou.get("confidence"):
+                            ou_picks.append({
+                                "game": f"{away} @ {home}",
+                                "pick": f"{ou['direction']} {cons_line:.1f}" if cons_line else ou["direction"],
+                                "direction": ou["direction"],
+                                "pred": ou.get("predicted_total"),
+                                "line": ou.get("consensus_line"),
+                                "margin": ou.get("margin"),
+                                "conf_pct": ou["confidence"],
+                                "conf": conf, "score": ou["confidence"],
+                            })
+
+            # ── Sort and pick best of each type ──────────────────────────────
+            best_bets: list[dict] = []
+
+            if ml_picks:
+                ml_picks.sort(key=lambda x: x["score"], reverse=True)
+                bm = ml_picks[0]
+                best_bets.append({**bm, "type": "💵 Moneyline", "color_start": "#0f2e6b", "color_end": "#1D428A",
+                                  "headline": bm["pick"],
+                                  "subline": f"EV: ${bm['ev']:+.2f}/100 · {bm['odds']:+d} @ {bm['book']}",
+                                  "badge": "Positive EV ✅" if bm["ev"] > 0 else "Negative EV",
+                                  "good": bm["ev"] > 0})
+
+            if spread_picks:
+                spread_picks.sort(key=lambda x: x["score"], reverse=True)
+                bs = spread_picks[0]
+                best_bets.append({**bs, "type": "📐 Spread", "color_start": "#064e3b", "color_end": "#065f46",
+                                  "headline": bs["pick"],
+                                  "subline": f"Model: {bs['pred']:+.1f} · Line: {bs['line']:+.1f} · Edge: {bs['edge']:.1f}",
+                                  "badge": "Covers ✅", "good": True})
+
+            if ou_picks:
+                ou_picks.sort(key=lambda x: x["score"], reverse=True)
+                bo = ou_picks[0]
+                icon = "📈" if bo["direction"] == "OVER" else "📉"
+                best_bets.append({**bo, "type": "🎯 Over/Under", "color_start": "#78350f", "color_end": "#92400e",
+                                  "headline": f"{icon} {bo['pick']}",
+                                  "subline": (
+                                      f"Pred: {bo['pred']:.1f} pts · {bo['margin']:+.1f} vs line · {bo['conf_pct']:.0%} conf"
+                                      if bo.get("pred") and bo.get("margin") is not None
+                                      else f"Pred: {bo['pred']:.1f} pts · {bo['conf_pct']:.0%} conf"
+                                  ),
+                                  "badge": f"{bo['conf_pct']:.0%} confidence", "good": True})
+
+            # Fallback: high-confidence ML when no live odds
+            if not best_bets:
+                high_df = preds_df[preds_df["confidence"] == "High"]
                 for _, g in high_df.iterrows():
                     home = g.get("home_team", "Home")
                     away = g.get("away_team", "Away")
                     hp   = float(g.get("home_win_prob", 0.5))
                     fav  = home if hp >= 0.5 else away
-                    fav_prob = max(hp, 1 - hp)
-                    spread = g.get("predicted_spread", None)
-                    spread_str = ""
-                    if spread is not None:
-                        try:
-                            spread_val = float(spread)
-                            spread_str = f"  ·  -{abs(spread_val):.1f}"
-                        except (TypeError, ValueError):
-                            pass
+                    prob = max(hp, 1 - hp)
+                    best_bets.append({
+                        "type": "💵 Moneyline", "game": f"{away} @ {home}",
+                        "headline": f"{fav} ML", "subline": f"Win prob: {prob:.0%}",
+                        "badge": "High Confidence", "good": True,
+                        "color_start": "#0f2e6b", "color_end": "#1D428A",
+                    })
+
+            # ── Render best-bet cards ─────────────────────────────────────────
+            if not best_bets:
+                st.info("No picks available yet — check back when today's lines are posted.")
+            else:
+                for bet in best_bets:
+                    badge_color = "#16a34a" if bet.get("good") else "#dc2626"
                     st.markdown(
-                        f'<div style="background:linear-gradient(90deg,#0f2e6b 0%,#1D428A 100%);'
-                        f'border-radius:10px;padding:10px 14px;margin-bottom:8px;color:white">'
-                        f'<div style="font-size:0.8rem;opacity:0.7">{away} @ {home}</div>'
-                        f'<div style="font-size:1.05rem;font-weight:700">{fav}{spread_str}</div>'
-                        f'<div style="font-size:0.85rem;margin-top:2px">Win prob: <b>{fav_prob:.0%}</b>'
-                        f'&nbsp;&nbsp;{_conf_badge("High")}</div>'
+                        f'<div style="background:linear-gradient(90deg,{bet["color_start"]} 0%,{bet["color_end"]} 100%);'
+                        f'border-radius:10px;padding:12px 16px;margin-bottom:10px;color:white">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center">'
+                        f'<span style="font-size:0.72rem;opacity:0.75;font-weight:600;letter-spacing:0.05em">{bet["type"].upper()}</span>'
+                        f'<span style="background:{badge_color};border-radius:8px;padding:1px 8px;font-size:0.68rem;font-weight:700">{bet["badge"]}</span>'
+                        f'</div>'
+                        f'<div style="font-size:0.72rem;opacity:0.65;margin-top:4px">{bet["game"]}</div>'
+                        f'<div style="font-size:1.1rem;font-weight:800;margin-top:4px">{bet["headline"]}</div>'
+                        f'<div style="font-size:0.8rem;opacity:0.85;margin-top:3px">{bet["subline"]}</div>'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
 
-            # ── Standings preview ──────────────────────────────────────────────
-            st.markdown("### 📊 Standings")
-            try:
-                standings = get_standings(CURRENT_SEASON)
-            except Exception:
-                standings = pd.DataFrame()
-
-            if not standings.empty:
-                cols_want = ["TeamCity", "TeamName", "Conference", "PlayoffRank", "WINS", "LOSSES", "WinPCT"]
-                avail = [c for c in cols_want if c in standings.columns]
-                if avail:
-                    s = standings[avail].copy()
-                    s["Team"] = s.get("TeamCity", "") + " " + s.get("TeamName", "")
-                    rank_col = "PlayoffRank" if "PlayoffRank" in s.columns else None
-                    conf_col = "Conference"  if "Conference"  in s.columns else None
-
-                    east_tab, west_tab = st.tabs(["East", "West"])
-                    for tab, conf_val in [(east_tab, "East"), (west_tab, "West")]:
-                        with tab:
-                            sub = s[s[conf_col] == conf_val] if conf_col else s
-                            if rank_col:
-                                sub = sub.sort_values(rank_col)
-                            disp_cols = ["Team", "WINS", "LOSSES", "WinPCT"]
-                            disp_cols = [c for c in disp_cols if c in sub.columns]
-                            show = sub[disp_cols].head(15).copy().reset_index(drop=True)
-                            show.index = show.index + 1
-                            col_cfg = {
-                                "Team":   st.column_config.TextColumn("Team", width="medium"),
-                                "WINS":   st.column_config.NumberColumn("W",  format="%d", width="small"),
-                                "LOSSES": st.column_config.NumberColumn("L",  format="%d", width="small"),
-                            }
-                            if "WinPCT" in show.columns:
-                                show["WinPCT"] = show["WinPCT"].astype(float)
-                                col_cfg["WinPCT"] = st.column_config.ProgressColumn(
-                                    "Win %",
-                                    format="%.3f",
-                                    min_value=0.0,
-                                    max_value=1.0,
-                                    width="medium",
-                                )
-                            st.dataframe(
-                                show,
-                                column_config=col_cfg,
-                                width="stretch",
-                                hide_index=False,
-                                height=430,
-                            )
-            else:
-                st.caption("Standings unavailable.")
+    st.markdown("---")
 
     st.markdown("---")
 
     # ── Navigation tiles ──────────────────────────────────────────────────────
     st.markdown("### Explore")
-    nc1, nc2, nc3, nc4, nc5 = st.columns(5)
+    nc1, nc2, nc3, nc4, nc5, nc6 = st.columns(6)
     tiles = [
         ("🏀", "Game Predictions", "Win probabilities, spreads & matchup analysis", "pages/1_Game_Predictions.py"),
         ("🎯", "Pick 6",           "DK Pick 6 player prop builder",                "pages/2_Pick_6.py"),
-        ("📈", "Team Stats",       "Advanced team metrics & trend charts",          "pages/3_Team_Stats.py"),
-        ("👤", "Player Stats",     "Per-player dashboards & rolling averages",      "pages/4_Player_Stats.py"),
-        ("🔬", "Model Performance","Accuracy, calibration & feature importance",    "pages/5_Model_Performance.py"),
+        ("🏆", "Standings",        "Full conference & division standings",           "pages/3_Standings.py"),
+        ("📊", "Team Stats",       "Advanced team metrics & trend charts",          "pages/4_Team_Stats.py"),
+        ("👤", "Player Stats",     "Per-player dashboards & rolling averages",      "pages/5_Player_Stats.py"),
+        ("🔬", "Model Performance","Accuracy, calibration & feature importance",    "pages/6_Model_Performance.py"),
     ]
-    for col, (icon, title, desc, path) in zip([nc1, nc2, nc3, nc4, nc5], tiles):
+    for col, (icon, title, desc, path) in zip([nc1, nc2, nc3, nc4, nc5, nc6], tiles):
         with col:
             with st.container(border=True):
                 st.markdown(
@@ -248,11 +354,12 @@ pg = st.navigation(
             st.Page("pages/2_Pick_6.py",           title="Pick 6",           icon="🎯"),
         ],
         "Stats": [
-            st.Page("pages/3_Team_Stats.py",       title="Team Stats",       icon="📊"),
-            st.Page("pages/4_Player_Stats.py",     title="Player Stats",     icon="🏃"),
+            st.Page("pages/3_Standings.py",         title="Standings",         icon="🏆"),
+            st.Page("pages/4_Team_Stats.py",        title="Team Stats",        icon="📊"),
+            st.Page("pages/5_Player_Stats.py",      title="Player Stats",      icon="🏃"),
         ],
         "Models": [
-            st.Page("pages/5_Model_Performance.py", title="Model Performance", icon="📈"),
+            st.Page("pages/6_Model_Performance.py", title="Model Performance", icon="📈"),
         ],
     }
 )
