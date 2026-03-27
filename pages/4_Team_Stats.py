@@ -15,7 +15,6 @@ from utils.data_fetcher import (
     get_league_team_stats_cached,
     get_team_estimated_metrics_cached,
     get_league_game_log_cached,
-    get_standings,
     get_all_teams,
     get_nbastuffer_teamstats,
     get_databallr_teams,
@@ -48,7 +47,7 @@ with st.sidebar:
         "Rolling Window (games)", options=[5, 10, 15, 20], value=10
     )
     st.markdown("---")
-    view_mode = st.radio("View", ["League Rankings", "Team Trends", "Advanced Metrics", "Standings", "External Advanced"])
+    view_mode = st.radio("View", ["League Rankings", "Team Trends", "Advanced Metrics", "External Advanced"])
 
 
 # ── Load data ──────────────────────────────────────────────────────────────────
@@ -246,38 +245,6 @@ elif view_mode == "Advanced Metrics":
                       color_discrete_sequence=[NBA_BLUE, NBA_RED, "#16a34a", "#d97706"])
         fig2.update_layout(showlegend=False)
         st.plotly_chart(fig2, width='stretch')
-
-
-# ── View: Standings ────────────────────────────────────────────────────────────
-
-elif view_mode == "Standings":
-    st.subheader(f"🏆 Standings — {season_select}")
-    with st.spinner("Loading standings..."):
-        standings = get_standings(season_select)
-    if standings.empty:
-        st.info("Standings not available.")
-    else:
-        disp_cols = [c for c in ["TeamName", "TeamCity", "Conference", "Division", "WINS", "LOSSES",
-                                  "WinPCT", "HOME", "ROAD", "L10", "strCurrentStreak"] if c in standings.columns]
-        for conf in ["East", "West"]:
-            col = "Conference" if "Conference" in standings.columns else None
-            if col:
-                sub = standings[standings[col].str.contains(conf, case=False, na=False)][disp_cols]
-            else:
-                sub = standings[disp_cols]
-            if not sub.empty:
-                st.markdown(f"**{conf}ern Conference**")
-                st.dataframe(
-                    sub.reset_index(drop=True).rename(columns={
-                        "TeamName": "Team", "TeamCity": "City", "Conference": "Conf",
-                        "Division": "Division", "WINS": "W", "LOSSES": "L",
-                        "WinPCT": "Win%", "HOME": "Home", "ROAD": "Away",
-                        "L10": "Last 10", "strCurrentStreak": "Streak",
-                    }),
-                    hide_index=True, width='stretch'
-                )
-
-
 
 
 # ── View: External Advanced ────────────────────────────────────────────────────

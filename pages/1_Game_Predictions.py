@@ -241,6 +241,40 @@ else:
         edge   = game.get("edge")
 
         with st.expander(f"**{away}  @  {home}**  |  {hprob:.0%} / {aprob:.0%}", expanded=True):
+            # ── Pre-compute odds context (shared across all card sections) ─────
+            home_key  = _team_key(home)
+            game_odds = full_odds_lookup.get(home_key)
+            bl_entry  = best_lines_lookup.get(home_key)
+
+            # Consensus spread & total from sportsbooks
+            _spreads_raw = (game_odds or {}).get("home_spread") or {}
+            _spread_vals = [v for v in _spreads_raw.values() if v is not None]
+            cons_spread  = float(np.mean(_spread_vals)) if _spread_vals else None
+
+            _totals_raw = (game_odds or {}).get("total") or {}
+            _total_vals = [v for v in _totals_raw.values() if v is not None]
+            cons_line   = float(np.mean(_total_vals)) if _total_vals else None
+
+            # O/U prediction
+            hid = game.get("home_team_id")
+            aid = game.get("away_team_id")
+            ou_result: dict = {}
+            if totals_model is not None and hid and aid:
+                h_feat = team_feat_map.get(int(hid))
+                a_feat = team_feat_map.get(int(aid))
+                if h_feat is not None and a_feat is not None:
+                    ou_result = predict_total_points(
+                        h_feat, a_feat,
+                        total_model=totals_model,
+                        consensus_line=cons_line,
+                    )
+
+            # EV for home / away moneyline
+            best_hml = bl_entry.get("best_home_ml") if bl_entry else None
+            best_aml = bl_entry.get("best_away_ml") if bl_entry else None
+            home_ev  = expected_value(hprob, best_hml) if best_hml is not None else None
+            away_ev  = expected_value(aprob, best_aml) if best_aml is not None else None
+
             lc, rc = st.columns([3, 2])
 
             with lc:
@@ -255,39 +289,6 @@ else:
                 if edge is not None:
                     m4.metric("Edge vs Market", f"{edge:+.1%}")
 
-                # ── Over/Under prediction ─────────────────────────────────────
-                hid = game.get("home_team_id")
-                aid = game.get("away_team_id")
-                if totals_model is not None and hid and aid:
-                    h_feat = team_feat_map.get(int(hid))
-                    a_feat = team_feat_map.get(int(aid))
-                    if h_feat is not None and a_feat is not None:
-                        # Consensus total from sbrscrape (if available)
-                        game_odds_ou = full_odds_lookup.get(_team_key(home)) if show_odds else None
-                        totals_dict  = (game_odds_ou or {}).get("total") or {}
-                        total_vals   = [v for v in totals_dict.values() if v is not None]
-                        cons_line    = float(np.mean(total_vals)) if total_vals else None
-
-                        ou_result = predict_total_points(
-                            h_feat, a_feat,
-                            total_model=totals_model,
-                            consensus_line=cons_line,
-                        )
-                        if ou_result.get("predicted_total") is not None:
-                            ou_dir   = ou_result.get("direction", "—")
-                            ou_pred  = ou_result["predicted_total"]
-                            ou_line  = ou_result.get("consensus_line")
-                            ou_conf  = ou_result.get("confidence")
-                            ou_label = f"{'📈' if ou_dir == 'OVER' else '📉' if ou_dir == 'UNDER' else '—'} {ou_dir}"
-                            ou_delta = (
-                                f"pred {ou_pred:.1f} vs line {ou_line:.1f} ({ou_result['margin']:+.1f})"
-                                if ou_line else f"pred {ou_pred:.1f} pts"
-                            )
-                            ou_help = (
-                                f"Confidence: {ou_conf:.0%}" if ou_conf is not None else ""
-                            )
-                            m4.metric("Total Pts (O/U)", ou_label, delta=ou_delta, help=ou_help)
-
                 st.markdown(
                     f"Confidence: {confidence_badge(conf)}",
                     unsafe_allow_html=True,
@@ -299,8 +300,6 @@ else:
 
             with rc:
                 # Radar chart if team stats available
-                hid = game.get("home_team_id")
-                aid = game.get("away_team_id")
                 if hid and aid and team_stats_map:
                     hs = team_stats_map.get(hid, {})
                     as_ = team_stats_map.get(aid, {})
@@ -314,6 +313,79 @@ else:
                             as_.update(aest.iloc[0].to_dict())
                     fig2 = radar_chart(hs, as_, home, away)
                     st.plotly_chart(fig2, width='stretch', config={"displayModeBar": False})
+
+            # ── Betting Signals ────────────────────────────────────────────────
+            _has_spread = cons_spread is not None
+            _has_ou     = bool(ou_result.get("predicted_total"))
+            _has_ev     = home_ev is not None or away_ev is not None
+
+            if _has_spread or _has_ou or _has_ev:
+                st.markdown("---")
+                st.caption("🎯 Betting Signals")
+                bs1, bs2, bs3 = st.columns(3)
+
+                # 1. Spread cover
+                with bs1:
+                    if _has_spread:
+                        # predicted_spread: positive = home wins by X pts
+                        # cons_spread: negative = home is favorite by |X| (market convention)
+                        # home covers when predicted margin exceeds the spread
+                        home_covers = (spread + cons_spread) > 0
+                        cover_icon  = "✅" if home_covers else "❌"
+                        cover_label = f"{home} Covers" if home_covers else f"{home} No Cover"
+                        st.metric(
+                            label=f"Spread Cover (line: {home} {cons_spread:+.1f})",
+                            value=f"{cover_icon} {cover_label}",
+                            delta=f"Model {spread:+.1f} | Line {cons_spread:+.1f}",
+                            delta_color="normal" if home_covers else "inverse",
+                            help="Whether model's predicted margin beats the consensus spread.",
+                        )
+                    else:
+                        st.metric("Spread Cover", "No line available")
+
+                # 2. Over/Under direction
+                with bs2:
+                    ou_td = ou_result.get("predicted_total")
+                    if ou_td is not None:
+                        ou_dir   = ou_result.get("direction", "—")
+                        ou_line  = ou_result.get("consensus_line")
+                        ou_conf  = ou_result.get("confidence")
+                        ou_icon  = "📈" if ou_dir == "OVER" else "📉" if ou_dir == "UNDER" else ""
+                        _margin  = ou_result.get("margin")
+                        st.metric(
+                            label=f"O/U (line: {ou_line:.1f})" if ou_line else "Over/Under",
+                            value=f"{ou_icon} {ou_dir}",
+                            delta=(
+                                f"Pred {ou_td:.1f} ({_margin:+.1f} vs line)"
+                                if ou_line and _margin is not None
+                                else f"Pred {ou_td:.1f} pts"
+                            ),
+                            delta_color="normal" if ou_dir == "OVER" else "inverse" if ou_dir == "UNDER" else "off",
+                            help=f"Confidence: {ou_conf:.0%}" if ou_conf is not None else None,
+                        )
+                    else:
+                        st.metric("Over/Under", "—", help="Totals model unavailable or no line")
+
+                # 3. Best moneyline value
+                with bs3:
+                    if _has_ev:
+                        _ev_map: dict = {}
+                        if home_ev is not None:
+                            _ev_map[home] = (home_ev, best_hml, bl_entry.get("best_home_ml_book", ""))
+                        if away_ev is not None:
+                            _ev_map[away] = (away_ev, best_aml, bl_entry.get("best_away_ml_book", ""))
+                        best_t = max(_ev_map, key=lambda t: _ev_map[t][0])
+                        bev, bodds, bbook = _ev_map[best_t]
+                        ev_icon = "✅" if bev > 0 else "❌"
+                        st.metric(
+                            label=f"Best ML Value ({_fmt_american(bodds)} @ {bbook})" if bbook else f"Best ML Value ({_fmt_american(bodds)})",
+                            value=f"{ev_icon} {best_t}",
+                            delta=f"${bev:+.2f} per $100",
+                            delta_color="normal" if bev > 0 else "inverse",
+                            help="Expected value per $100 wagered on the best available moneyline.",
+                        )
+                    else:
+                        st.metric("ML Value", "—", help="Live odds unavailable")
 
             # ── nbastuffer contextual metrics row ──────────────────────────────
             if not nbs_team_df.empty:
@@ -359,11 +431,7 @@ else:
 
             # ── Multi-book odds comparison ──────────────────────────────────────
             if show_odds:
-                home_key = _team_key(home)
-                game_odds = full_odds_lookup.get(home_key)
-                bl        = best_lines_lookup.get(home_key)
-
-                if game_odds or bl:
+                if game_odds or bl_entry:
                     st.markdown("---")
                     with st.expander("📊 Multi-Book Odds & Expected Value", expanded=False):
                         # Build comparison table
@@ -414,16 +482,12 @@ else:
                                 width='stretch',
                             )
 
-                        # EV & Kelly section
-                        if bl and bl.get("best_home_ml") is not None:
+                        # EV & Kelly section — uses values pre-computed above
+                        if bl_entry and best_hml is not None:
                             st.markdown("##### 💰 Expected Value (vs Best Available Line)")
                             ev_c1, ev_c2, ev_c3, ev_c4 = st.columns(4)
-                            best_hml = bl["best_home_ml"]
-                            best_aml = bl.get("best_away_ml")
-
-                            home_ev = expected_value(hprob, best_hml)
                             ev_c1.metric(
-                                f"{home} ML ({_fmt_american(best_hml)} @ {bl.get('best_home_ml_book','')})",
+                                f"{home} ML ({_fmt_american(best_hml)} @ {bl_entry.get('best_home_ml_book','')})",
                                 f"${home_ev:+.2f} / $100",
                                 delta="Positive EV ✅" if home_ev > 0 else "Negative EV ❌",
                                 delta_color="normal" if home_ev > 0 else "inverse",
@@ -434,11 +498,9 @@ else:
                                 f"{home_kelly * 25:.1f}% bankroll",
                                 help="Quarter-Kelly (÷4) recommended. Full Kelly shown ×0.25.",
                             )
-
                             if best_aml is not None:
-                                away_ev = expected_value(aprob, best_aml)
                                 ev_c3.metric(
-                                    f"{away} ML ({_fmt_american(best_aml)} @ {bl.get('best_away_ml_book','')})",
+                                    f"{away} ML ({_fmt_american(best_aml)} @ {bl_entry.get('best_away_ml_book','')})",
                                     f"${away_ev:+.2f} / $100",
                                     delta="Positive EV ✅" if away_ev > 0 else "Negative EV ❌",
                                     delta_color="normal" if away_ev > 0 else "inverse",
