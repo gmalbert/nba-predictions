@@ -31,7 +31,7 @@ GREEN    = "#16a34a"
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.image("data_files/logo.png", width=120)
+    st.image("data_files/logo.png", width=200)
     st.markdown("---")
     all_players = get_all_active_players()
     player_names = sorted(all_players["full_name"].tolist())
@@ -181,7 +181,7 @@ with tab_log:
             "FG_PCT": "FG%", "FT_PCT": "FT%", "STL": "Stl", "BLK": "Blk",
             "TOV": "Tov", "PLUS_MINUS": "+/-",
         }),
-        hide_index=True, use_container_width=True
+        hide_index=True, width='stretch'
     )
 
 with tab_trends:
@@ -190,17 +190,17 @@ with tab_trends:
     window_size  = st.slider("Rolling window", 3, 15, 5, key="trend_window")
     if stat_to_plot in df_full.columns:
         st.plotly_chart(rolling_chart(df_full, stat_to_plot, window_size),
-                        use_container_width=True, config={"displayModeBar": False})
+                        width='stretch', config={"displayModeBar": False})
     # Distribution
     if stat_to_plot in df_full.columns:
         st.plotly_chart(hist_chart(df_full[stat_to_plot].dropna().values, stat_to_plot),
-                        use_container_width=True, config={"displayModeBar": False})
+                        width='stretch', config={"displayModeBar": False})
 
 with tab_splits:
     split_stat = st.selectbox("Stat", ["PTS", "REB", "AST", "FG3M", "PLUS_MINUS"], key="split_stat")
     if split_stat in df_full.columns:
         st.plotly_chart(splits_chart(df_full, split_stat),
-                        use_container_width=True, config={"displayModeBar": False})
+                        width='stretch', config={"displayModeBar": False})
     # Numeric splits table
     splits_rows = []
     for label, mask in [("Home", df_full.get("IS_HOME", pd.Series(dtype=int)) == 1),
@@ -219,7 +219,7 @@ with tab_splits:
                 "Min": round(sub[split_stat].min(), 1),
             })
     if splits_rows:
-        st.dataframe(pd.DataFrame(splits_rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(splits_rows), hide_index=True, width='stretch')
 
 with tab_props:
     st.markdown("**Historical performance vs common prop lines:**")
@@ -238,7 +238,7 @@ with tab_props:
                 "Over Rate (L10)": f"{float((df_full[prop_stat].tail(10) > line).mean()):.0%}",
                 "Edge vs 50/50": f"{(over_rate - 0.5):+.0%}",
             })
-        st.dataframe(pd.DataFrame(prop_rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(prop_rows), hide_index=True, width='stretch')
 
 with tab_nbs:
     st.caption("Advanced player stats from nbastuffer.com (TS%, USG%, PRA, ORTG/DRTG)")
@@ -301,7 +301,7 @@ with tab_nbs:
             .reset_index(drop=True)
         )
         nbs_leaderboard.index += 1
-        st.dataframe(nbs_leaderboard.head(50), use_container_width=True)
+        st.dataframe(nbs_leaderboard.head(50), width='stretch')
 
 # ── Compare mode ───────────────────────────────────────────────────────────────
 
@@ -324,6 +324,6 @@ if compare_mode and compare_name:
                     selected_name: round(v1, 1) if not np.isnan(v1) else "–",
                     compare_name:  round(v2, 1) if not np.isnan(v2) else "–",
                 })
-            st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(comp_rows), hide_index=True, width='stretch')
 
 add_betting_oracle_footer()

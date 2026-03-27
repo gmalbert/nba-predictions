@@ -1,7 +1,7 @@
 """
 Historical NBA data download script.
 
-Pulls 5 seasons (2021-22 through 2025-26) of data from nba_api and saves
+Pulls 9 seasons (2017-18 through 2025-26) of data from nba_api and saves
 to data_files/historical/ as parquet files.
 
 Usage:
@@ -9,7 +9,7 @@ Usage:
     python scripts/fetch_historical.py --boxscores       # Also fetch all box scores (slow)
     python scripts/fetch_historical.py --season 2024-25  # Box scores for one season only
 
-NOTE: The base fetch (no --boxscores) makes ~20 API calls and takes ~30 seconds.
+NOTE: The base fetch (no --boxscores) makes ~45 API calls and takes ~60-90 seconds.
       With --boxscores it makes ~6000+ calls and may take 60-90 minutes.
       Run once; all data is cached to disk and subsequent runs are instant.
 """
@@ -47,7 +47,7 @@ def fetch_season_summaries():
       - league_playerstats: season-averaged stats for all players
       - team_est_metrics : ORtg / DRtg / pace / net rating
     """
-    log(f"Fetching summaries for seasons: {HISTORICAL_SEASONS}")
+    log(f"Fetching summaries for {len(HISTORICAL_SEASONS)} seasons: {HISTORICAL_SEASONS[0]} → {HISTORICAL_SEASONS[-1]}")
     log(f"Cache directory: {HIST_DIR.resolve()}\n")
 
     for season in HISTORICAL_SEASONS:

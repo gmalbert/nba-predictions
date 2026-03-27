@@ -5,6 +5,14 @@
 
 ---
 
+## Status / - [x] Completed in code
+
+- [x] `sbrscrape` integration implemented via `utils/data_fetcher.py` (`get_multi_book_odds()` + `get_best_lines()`)
+- [x] Historical odds backfill script implemented as `scripts/fetch_historical_odds.py`
+- [x] Odds features added, and model training includes odds-based feature columns
+- [x] Live multi-book odds UI in `pages/1_Game_Predictions.py`
+- [x] Odds API still present as fallback
+
 ## What They Have
 
 The repo uses **`sbrscrape`** (`pip install sbrscrape`) to pull live and historical odds from **ScoresAndOdds / SBR** for these sportsbooks:

@@ -1,5 +1,8 @@
 # Prediction Methodology
 
+## Status
+- [x] Complete
+
 This document details how game outcome predictions and DraftKings Pick 6 predictions are generated, including confidence scoring, real-time updates, and strategy recommendations.
 
 ---

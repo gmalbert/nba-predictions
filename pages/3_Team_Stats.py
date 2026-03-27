@@ -33,7 +33,7 @@ NBA_RED  = "#C8102E"
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.image("data_files/logo.png", width=120)
+    st.image("data_files/logo.png", width=200)
     st.markdown("---")
     all_teams_df = get_all_teams()
     team_options = sorted(all_teams_df["full_name"].tolist())
@@ -119,7 +119,7 @@ if view_mode == "League Rankings":
                 "OREB": "OReb", "DREB": "DReb", "REB": "Reb",
                 "PLUS_MINUS": "+/-", "W": "W", "L": "L", "W_PCT": "Win%",
             })
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            st.dataframe(display_df, width='stretch', hide_index=True)
 
     # Advanced metrics
     if not est_metrics.empty:
@@ -138,7 +138,7 @@ if view_mode == "League Rankings":
                 "E_NET_RATING": "Net Rtg", "E_PACE": "Pace", "E_AST_RATIO": "Ast Ratio",
             })
         )
-        st.dataframe(adv_out, use_container_width=True, hide_index=True)
+        st.dataframe(adv_out, width='stretch', hide_index=True)
 
 
 # ── View: Team Trends ──────────────────────────────────────────────────────────
@@ -183,7 +183,7 @@ elif view_mode == "Team Trends":
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
         margin=dict(l=10, r=10, t=40, b=30),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 # ── View: Advanced Metrics ─────────────────────────────────────────────────────
@@ -227,7 +227,7 @@ elif view_mode == "Advanced Metrics":
         height=450,
         margin=dict(l=20, r=20, t=30, b=30),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     # Bar chart comparison
     st.markdown("---")
@@ -245,7 +245,7 @@ elif view_mode == "Advanced Metrics":
         fig2 = px.bar(bar_df, x="Team", y=bar_stat, color="Team", height=350,
                       color_discrete_sequence=[NBA_BLUE, NBA_RED, "#16a34a", "#d97706"])
         fig2.update_layout(showlegend=False)
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width='stretch')
 
 
 # ── View: Standings ────────────────────────────────────────────────────────────
@@ -274,7 +274,7 @@ elif view_mode == "Standings":
                         "WinPCT": "Win%", "HOME": "Home", "ROAD": "Away",
                         "L10": "Last 10", "strCurrentStreak": "Streak",
                     }),
-                    hide_index=True, use_container_width=True
+                    hide_index=True, width='stretch'
                 )
 
 
@@ -313,7 +313,7 @@ elif view_mode == "External Advanced":
             sort_col = st.selectbox("Sort by", [c for c in ["SAR", "eDIFF", "WIN%", "eWIN%"] if c in display_cols], key="nbs_sort")
             nbs_display = nbs_display.sort_values(sort_col, ascending=False).reset_index(drop=True)
             nbs_display.index += 1
-            st.dataframe(nbs_display, use_container_width=True)
+            st.dataframe(nbs_display, width='stretch')
 
             # Bar chart
             st.markdown("---")
@@ -335,7 +335,7 @@ elif view_mode == "External Advanced":
                 coloraxis_showscale=False,
                 margin=dict(l=10, r=10, t=40, b=80),
             )
-            st.plotly_chart(bar_fig, use_container_width=True)
+            st.plotly_chart(bar_fig, width='stretch')
 
     with ext_tab2:
         st.caption("Data from databallr.com — Offensive/Defensive Ratings and Efficiency Metrics (current season)")
@@ -357,7 +357,7 @@ elif view_mode == "External Advanced":
                 db_display[nc] = pd.to_numeric(db_display[nc], errors="coerce")
             db_display = db_display.sort_values(sort_db, ascending=(sort_db == "DRTG")).reset_index(drop=True)
             db_display.index += 1
-            st.dataframe(db_display, use_container_width=True)
+            st.dataframe(db_display, width='stretch')
 
             st.markdown("---")
             # Scatter: ORTG vs DRTG
@@ -382,7 +382,7 @@ elif view_mode == "External Advanced":
                 fig_sc.add_hline(y=avg_d, line_dash="dot", line_color="gray", opacity=0.5)
                 fig_sc.add_vline(x=avg_o, line_dash="dot", line_color="gray", opacity=0.5)
                 fig_sc.update_layout(margin=dict(l=10, r=10, t=50, b=20))
-                st.plotly_chart(fig_sc, use_container_width=True)
+                st.plotly_chart(fig_sc, width='stretch')
 
 
 add_betting_oracle_footer()

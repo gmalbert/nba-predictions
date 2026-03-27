@@ -322,9 +322,38 @@ def build_training_dataset(game_log_df: pd.DataFrame) -> pd.DataFrame:
         fv["HOME_PTS"]     = home_row.get("PTS", np.nan)
         fv["AWAY_PTS"]     = away_rows.iloc[0].get("PTS", np.nan)
         fv["MARGIN"]       = fv["HOME_PTS"] - fv["AWAY_PTS"]
+        fv["TOTAL_PTS"]    = fv["HOME_PTS"] + fv["AWAY_PTS"]
         rows.append(fv)
 
     return pd.DataFrame(rows).reset_index(drop=True)
+
+
+def get_training_dataset(season: str, season_type: str = "Regular Season") -> pd.DataFrame:
+    """
+    Disk-backed training dataset for a single season.
+
+    Reads from data_files/historical/training_dataset_{season}_{season_type}.parquet
+    if it exists. Otherwise builds it from the game log and saves it.
+    This lets preload_cache.py pre-build datasets so the Model Performance
+    page never has to compute them at page-load time.
+    """
+    from pathlib import Path
+    from utils.data_fetcher import HIST_DIR, get_league_game_log_cached  # lazy import avoids circular dep
+
+    tag  = season_type.replace(" ", "_")
+    path = HIST_DIR / f"training_dataset_{season.replace('-', '_')}_{tag}.parquet"
+
+    if path.exists():
+        return pd.read_parquet(path)
+
+    game_log = get_league_game_log_cached(season, season_type)
+    if game_log.empty:
+        return pd.DataFrame()
+
+    df = build_training_dataset(game_log)
+    if not df.empty:
+        df.to_parquet(path, index=False)
+    return df
 
 
 # ── Player prop feature vector ─────────────────────────────────────────────────
@@ -664,3 +693,142 @@ def _american_ml_to_prob(odds: float) -> float:
 
 
 ODDS_EXTENDED_FEATURE_NAMES = EXTENDED_GAME_FEATURE_NAMES + ODDS_FEATURE_NAMES
+
+
+# ── Historical odds feature merger ───────────────────────────────────────────
+
+def merge_odds_features(
+    training_df: pd.DataFrame,
+    hist_dir: "str | None" = None,
+) -> pd.DataFrame:
+    """
+    Join historical odds data from data_files/historical/odds_{season}.parquet
+    to the training DataFrame produced by build_training_dataset().
+
+    Adds columns: implied_prob_home, implied_prob_away, spread_consensus,
+    total_consensus, odds_disagreement_ml, odds_disagreement_total.
+
+    Rows with no matching odds data have NaN for these columns, which can be
+    filled with 0 / median before model training.
+
+    Parameters
+    ----------
+    training_df : Output of build_training_dataset() with GAME_DATE column.
+    hist_dir    : Override for data_files/historical/ directory path.
+    """
+    from pathlib import Path as _Path
+
+    if hist_dir is None:
+        hist_dir = _Path(__file__).resolve().parent.parent / "data_files" / "historical"
+    else:
+        hist_dir = _Path(hist_dir)
+
+    # Load all available odds parquets
+    odds_frames = []
+    for p in sorted(hist_dir.glob("odds_*.parquet")):
+        try:
+            df = pd.read_parquet(p)
+            odds_frames.append(df)
+        except Exception:
+            pass
+
+    if not odds_frames:
+        # No odds data on disk — return df with NaN odds columns
+        for col in ODDS_FEATURE_NAMES:
+            training_df[col] = np.nan
+        return training_df
+
+    odds_all = pd.concat(odds_frames, ignore_index=True)
+    odds_all["date"] = pd.to_datetime(odds_all["date"]).dt.date
+
+    # Normalise team names: last word lowercased (e.g. "Lakers")
+    def _last_word(s: str) -> str:
+        return str(s).split()[-1].lower()
+
+    odds_all["_home_key"] = odds_all["home_team"].apply(_last_word)
+    odds_all["_away_key"] = odds_all["away_team"].apply(_last_word)
+
+    training_df = training_df.copy()
+    training_df["GAME_DATE"] = pd.to_datetime(training_df["GAME_DATE"])
+
+    # Build lookup: (date, home_key, away_key) → row
+    # We need team names for training_df — pull from any team-name column available
+    # The training_df does NOT have team names, so we join on GAME_ID if it exists,
+    # otherwise fall back to a simpler date-based join approach.
+    books = [
+        "fanduel", "draftkings", "betmgm", "pointsbet",
+        "caesars", "wynn", "bet_rivers_ny",
+    ]
+
+    # Compute consensus from each odds row
+    def _row_to_features(r: pd.Series) -> dict:
+        home_mls = {b: r.get(f"ml_home_{b}") for b in books}
+        away_mls = {b: r.get(f"ml_away_{b}") for b in books}
+        totals   = {b: r.get(f"total_{b}") for b in books}
+        spreads  = {b: r.get(f"spread_{b}") for b in books}
+
+        home_probs = [_american_ml_to_prob(v) for v in home_mls.values() if v is not None]
+        away_probs = [_american_ml_to_prob(v) for v in away_mls.values() if v is not None]
+        total_vals  = [v for v in totals.values() if v is not None]
+        spread_vals = [v for v in spreads.values() if v is not None]
+        hml_vals    = [v for v in home_mls.values() if v is not None]
+
+        imp_home = imp_away = np.nan
+        if home_probs and away_probs:
+            raw_h = float(np.mean(home_probs))
+            raw_a = float(np.mean(away_probs))
+            vig   = raw_h + raw_a
+            if vig > 0:
+                imp_home = raw_h / vig
+                imp_away = raw_a / vig
+
+        return {
+            "date":                    r["date"],
+            "_home_key":               r["_home_key"],
+            "_away_key":               r["_away_key"],
+            "implied_prob_home":        imp_home,
+            "implied_prob_away":        imp_away,
+            "spread_consensus":         float(np.mean(spread_vals)) if spread_vals else np.nan,
+            "total_consensus":          float(np.mean(total_vals))  if total_vals  else np.nan,
+            "odds_disagreement_ml":     float(np.std(hml_vals))     if len(hml_vals) > 1 else 0.0,
+            "odds_disagreement_total":  float(np.std(total_vals))   if len(total_vals) > 1 else 0.0,
+        }
+
+    odds_features = pd.DataFrame([_row_to_features(r) for _, r in odds_all.iterrows()])
+
+    # Initialize odds columns in training_df
+    for col in ODDS_FEATURE_NAMES:
+        training_df[col] = np.nan
+
+    # We can't join directly without team names in training_df.
+    # Use a secondary join: merge odds_features into training_df on GAME_DATE only
+    # (many-to-many, then resolve by checking home/away team IDs via teams lookup).
+    # For simplicity: join on date only, then keep first match per date×game.
+    date_to_features: dict = {}
+    for _, row in odds_features.iterrows():
+        key = (row["date"], row["_home_key"], row["_away_key"])
+        date_to_features[key] = row
+
+    # training_df has HOME_TEAM_ID / AWAY_TEAM_ID — need to get team abbreviations.
+    # Try to load teams lookup from nba_api static.
+    team_last_word: dict[int, str] = {}
+    try:
+        from nba_api.stats.static import teams as _nba_teams
+        for t in _nba_teams.get_teams():
+            team_last_word[t["id"]] = t["full_name"].split()[-1].lower()
+    except Exception:
+        pass
+
+    for idx, trow in training_df.iterrows():
+        h_id = trow.get("HOME_TEAM_ID")
+        a_id = trow.get("AWAY_TEAM_ID")
+        gdate = pd.to_datetime(trow["GAME_DATE"]).date()
+        h_key = team_last_word.get(int(h_id), "") if h_id else ""
+        a_key = team_last_word.get(int(a_id), "") if a_id else ""
+
+        match = date_to_features.get((gdate, h_key, a_key))
+        if match is not None:
+            for col in ODDS_FEATURE_NAMES:
+                training_df.at[idx, col] = match.get(col, np.nan)
+
+    return training_df

@@ -38,7 +38,10 @@ HIST_DIR.mkdir(exist_ok=True)
 
 RATE_LIMIT_DELAY = 0.7  # seconds between nba_api calls
 
-HISTORICAL_SEASONS = ["2021-22", "2022-23", "2023-24", "2024-25", "2025-26"]
+HISTORICAL_SEASONS = [
+    "2017-18", "2018-19", "2019-20", "2020-21",
+    "2021-22", "2022-23", "2023-24", "2024-25", "2025-26",
+]
 CURRENT_SEASON = "2025-26"
 
 
@@ -547,8 +550,10 @@ def get_multi_book_odds() -> list[dict]:
     Falls back to empty list on any error (e.g. sbrscrape unavailable).
     """
     try:
+        import io, contextlib
         from sbrscrape import Scoreboard  # optional dependency
-        sb = Scoreboard(sport="NBA")
+        with contextlib.redirect_stdout(io.StringIO()):
+            sb = Scoreboard(sport="NBA")
         games = getattr(sb, "games", None) or []
         return list(games)
     except Exception:

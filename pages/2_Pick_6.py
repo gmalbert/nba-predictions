@@ -69,13 +69,17 @@ def _show_leaders(df, stat, label, top_n):
     for c in disp.select_dtypes(include="float").columns:
         disp[c] = disp[c].round(1)
 
-    st.dataframe(disp, use_container_width=True, hide_index=True, height=_df_height(disp))
+    st.dataframe(disp, width='stretch', hide_index=True, height=_df_height(disp))
     st.caption(f"Top {top_n} players by {label} · {CURRENT_SEASON} · Per Game")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    with st.sidebar:
+        st.image("data_files/logo.png", width=200)
+        st.markdown("---")
+    
     st.title("🎯 DraftKings Pick 6 – NBA")
     st.markdown("---")
 
@@ -207,7 +211,7 @@ def main():
                 for c in disp.select_dtypes(include="float").columns:
                     disp[c] = disp[c].round(1)
 
-                st.dataframe(disp, use_container_width=True, hide_index=True,
+                st.dataframe(disp, width='stretch', hide_index=True,
                              height=_df_height(disp))
 
                 st.caption(
@@ -440,7 +444,7 @@ line may be higher or lower — always check the real line in the **📊 DK Pick
                         gl_disp.rename(columns=rename_map).sort_values(
                             "Date", ascending=False
                         ),
-                        use_container_width=True,
+                        width='stretch',
                         hide_index=True,
                     )
 
@@ -604,7 +608,7 @@ to estimate `P(stat > line)`.
                             "MATCHUP":   "Opponent",
                             "WL":        "W/L",
                         }),
-                        use_container_width=True,
+                        width='stretch',
                         hide_index=True,
                         height=_df_height(df6[show_avail]),
                     )

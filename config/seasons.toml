@@ -1,0 +1,31 @@
+# NBA Season Configuration
+# Used by data pipeline scripts to determine which seasons to fetch/train on.
+# Update `current_season` at the start of each new NFL season.
+
+current_season = "2025-26"
+
+# All seasons included in model training.
+# Append each new season here before running scripts/fetch_historical.py.
+historical_seasons = [
+    "2017-18",
+    "2018-19",
+    "2019-20",   # COVID bubble season — included; SEASON feature allows model to discount
+    "2020-21",   # Shortened COVID season (72 games)
+    "2021-22",
+    "2022-23",
+    "2023-24",
+    "2024-25",
+    "2025-26",
+]
+
+# Approximate regular-season date boundaries (used by fetch_historical_odds.py)
+[season_dates]
+"2025-26" = { start = "2025-10-22", end = "2026-04-13" }
+"2024-25" = { start = "2024-10-22", end = "2025-04-13" }
+"2023-24" = { start = "2023-10-24", end = "2024-04-14" }
+"2022-23" = { start = "2022-10-18", end = "2023-04-09" }
+"2021-22" = { start = "2021-10-19", end = "2022-04-10" }
+"2020-21" = { start = "2020-12-22", end = "2021-05-16" }
+"2019-20" = { start = "2019-10-22", end = "2020-08-14" }
+"2018-19" = { start = "2018-10-16", end = "2019-04-10" }
+"2017-18" = { start = "2017-10-17", end = "2018-04-11" }

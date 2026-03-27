@@ -30,8 +30,9 @@ from utils.data_fetcher import (
     BOOK_LABELS,
     CURRENT_SEASON,
 )
-from utils.prediction_engine import predict_today_games, win_prob_to_spread
-from utils.model_utils import load_models, EloSystem, MODEL_DIR
+from utils.prediction_engine import predict_today_games, win_prob_to_spread, predict_total_points
+from utils.model_utils import load_models, load_totals_model, EloSystem, MODEL_DIR
+from utils.feature_engine import engineer_team_features
 from utils.feature_engine import enrich_with_nbastuffer_team
 from footer import add_betting_oracle_footer
 
@@ -53,6 +54,25 @@ def _load_models():
 def _load_elo():
     elo_path = MODEL_DIR / "elo_system.pkl"
     return EloSystem.load(elo_path) if elo_path.exists() else None
+
+
+@st.cache_resource
+def _load_totals_model():
+    return load_totals_model()
+
+
+@st.cache_data(ttl=3600)
+def _build_team_features_map(season: str) -> dict[int, pd.Series]:
+    """Build {team_id: latest_feature_row} for all teams. Cached for 1 hour."""
+    game_log = get_league_game_log_cached(season)
+    if game_log.empty:
+        return {}
+    result: dict[int, pd.Series] = {}
+    for tid, grp in game_log.groupby("TEAM_ID"):
+        feats = engineer_team_features(grp.sort_values("GAME_DATE"))
+        if not feats.empty:
+            result[int(tid)] = feats.sort_values("GAME_DATE").iloc[-1]
+    return result
 
 
 def confidence_badge(tier: str) -> str:
@@ -121,7 +141,7 @@ def _ev_badge(ev: float) -> str:
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.image("data_files/logo.png", width=120)
+    st.image("data_files/logo.png", width=200)
     st.markdown("---")
     selected_date = st.date_input("Game Date", value=datetime.today())
     conf_filter   = st.selectbox("Confidence Filter", ["All", "High", "Medium", "Low"])
@@ -138,15 +158,9 @@ st.title("🏀 Game Predictions")
 st.caption(f"Predictions for {selected_date.strftime('%A, %B %d, %Y')}")
 
 # Load models (quiet on missing)
-models = _load_models()
-elo    = _load_elo()
-
-if not models and elo is None:
-    st.warning(
-        "⚠️ No trained models found. Run `python scripts/fetch_historical.py` "
-        "then `python scripts/train_models.py` to train models.",
-        icon="⚠️",
-    )
+models       = _load_models()
+elo          = _load_elo()
+totals_model = _load_totals_model()
 
 with st.spinner("Loading predictions..."):
     try:
@@ -214,6 +228,9 @@ else:
         _team_key(g.get("home_team", "")): g for g in multi_odds_raw
     }
 
+    # Pre-build team feature rows once (cached) — used for O/U predictions
+    team_feat_map = _build_team_features_map(CURRENT_SEASON) if totals_model is not None else {}
+
     for _, game in preds_df.iterrows():
         home  = game["home_team"]
         away  = game["away_team"]
@@ -229,7 +246,7 @@ else:
             with lc:
                 # Win probability bar
                 fig = prob_bar(hprob, home, away)
-                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+                st.plotly_chart(fig, width='stretch', config={"displayModeBar": False})
 
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Home Win %",  f"{hprob:.0%}")
@@ -237,6 +254,39 @@ else:
                 m3.metric("Spread",      f"{'Home' if spread < 0 else 'Away'} {abs(spread):.1f}")
                 if edge is not None:
                     m4.metric("Edge vs Market", f"{edge:+.1%}")
+
+                # ── Over/Under prediction ─────────────────────────────────────
+                hid = game.get("home_team_id")
+                aid = game.get("away_team_id")
+                if totals_model is not None and hid and aid:
+                    h_feat = team_feat_map.get(int(hid))
+                    a_feat = team_feat_map.get(int(aid))
+                    if h_feat is not None and a_feat is not None:
+                        # Consensus total from sbrscrape (if available)
+                        game_odds_ou = full_odds_lookup.get(_team_key(home)) if show_odds else None
+                        totals_dict  = (game_odds_ou or {}).get("total") or {}
+                        total_vals   = [v for v in totals_dict.values() if v is not None]
+                        cons_line    = float(np.mean(total_vals)) if total_vals else None
+
+                        ou_result = predict_total_points(
+                            h_feat, a_feat,
+                            total_model=totals_model,
+                            consensus_line=cons_line,
+                        )
+                        if ou_result.get("predicted_total") is not None:
+                            ou_dir   = ou_result.get("direction", "—")
+                            ou_pred  = ou_result["predicted_total"]
+                            ou_line  = ou_result.get("consensus_line")
+                            ou_conf  = ou_result.get("confidence")
+                            ou_label = f"{'📈' if ou_dir == 'OVER' else '📉' if ou_dir == 'UNDER' else '—'} {ou_dir}"
+                            ou_delta = (
+                                f"pred {ou_pred:.1f} vs line {ou_line:.1f} ({ou_result['margin']:+.1f})"
+                                if ou_line else f"pred {ou_pred:.1f} pts"
+                            )
+                            ou_help = (
+                                f"Confidence: {ou_conf:.0%}" if ou_conf is not None else ""
+                            )
+                            m4.metric("Total Pts (O/U)", ou_label, delta=ou_delta, help=ou_help)
 
                 st.markdown(
                     f"Confidence: {confidence_badge(conf)}",
@@ -263,7 +313,7 @@ else:
                         if not aest.empty:
                             as_.update(aest.iloc[0].to_dict())
                     fig2 = radar_chart(hs, as_, home, away)
-                    st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+                    st.plotly_chart(fig2, width='stretch', config={"displayModeBar": False})
 
             # ── nbastuffer contextual metrics row ──────────────────────────────
             if not nbs_team_df.empty:
@@ -305,7 +355,7 @@ else:
                         "FOUL_DIFFERENTIAL": "Foul Diff",
                         "EXPERIENCE_YEARS": "Experience (yrs)",
                     })
-                    st.dataframe(df_show, hide_index=True, use_container_width=True)
+                    st.dataframe(df_show, hide_index=True, width='stretch')
 
             # ── Multi-book odds comparison ──────────────────────────────────────
             if show_odds:
@@ -361,7 +411,7 @@ else:
                             st.dataframe(
                                 odds_tbl_df.style.apply(_highlight_best, axis=1),
                                 hide_index=True,
-                                use_container_width=True,
+                                width='stretch',
                             )
 
                         # EV & Kelly section
@@ -419,6 +469,6 @@ if show_injuries:
             "status":      "Status",
             "description": "Description",
         })
-        st.dataframe(inj_show, hide_index=True, use_container_width=True)
+        st.dataframe(inj_show, hide_index=True, width='stretch')
 
 add_betting_oracle_footer()

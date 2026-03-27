@@ -198,6 +198,19 @@ Some aspects of kyleskom's repo are **not worth adopting**:
 
 ---
 
+## Status / - [x] Completed in code
+
+- [x] `sbrscrape` multi-book odds support in `utils/data_fetcher.py`
+- [x] `get_multi_book_odds()` and `get_best_lines()` implemented
+- [x] `expected_value()` and `kelly_criterion()` in `utils/prediction_engine.py`
+- [x] O/U model and `TOTAL_PTS` pipeline in `utils/model_utils.py`/`utils/feature_engine.py`
+- [x] `HISTORICAL_SEASONS` expanded to 2017-18..2025-26
+- [x] Walk-forward CV + isotonic calibration in `scripts/train_models.py`
+- [x] `pages/1_Game_Predictions.py` uses preloaded `team_feat_map` in cached mode
+- [x] ROI and cumulative P&L charts added to `pages/5_Model_Performance.py`
+- [x] `config/seasons.toml` added for season management
+- [x] `scripts/daily_update.py` created for daily pipeline orchestration
+
 ## Summary of All Integration Docs
 
 | Document | Focus | Key Additions |

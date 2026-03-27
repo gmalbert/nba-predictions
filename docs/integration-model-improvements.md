@@ -5,6 +5,16 @@
 
 ---
 
+## Status / - [x] Completed in code
+
+- [x] O/U model workflow implemented in `utils/model_utils.py` + `utils/feature_engine.py`
+- [x] Calibration in `scripts/train_models.py` and `utils/model_utils.py`
+- [x] Walk-forward CV in `utils/model_utils.py` and `scripts/train_models.py`
+- [x] EV/Kelly math in `utils/prediction_engine.py`
+- [x] UI display in `pages/1_Game_Predictions.py` and `pages/5_Model_Performance.py`
+
+---
+
 ## What They Do That We Don't
 
 ### 1. Over/Under (Totals) Model
