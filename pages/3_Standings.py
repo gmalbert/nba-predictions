@@ -116,14 +116,14 @@ if view_mode == "Conference":
         if east_df.empty:
             st.info("No data available.")
         else:
-            st.dataframe(east_df, column_config=_col_config(east_df), use_container_width=True)
+            st.dataframe(east_df, column_config=_col_config(east_df), width="stretch")
 
     with west_tab:
         west_df = _build_conf_df("West")
         if west_df.empty:
             st.info("No data available.")
         else:
-            st.dataframe(west_df, column_config=_col_config(west_df), use_container_width=True)
+            st.dataframe(west_df, column_config=_col_config(west_df), width="stretch")
 
 # ── Division view ──────────────────────────────────────────────────────────────
 
@@ -159,7 +159,7 @@ elif view_mode == "Division":
                     st.dataframe(
                         div_df,
                         column_config=_col_config(div_df),
-                        use_container_width=True,
+                        width="stretch",
                         height=min(220, 36 + len(div_df) * 35),
                     )
 
