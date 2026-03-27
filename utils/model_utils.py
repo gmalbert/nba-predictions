@@ -15,7 +15,14 @@ from sklearn.metrics import accuracy_score, log_loss, brier_score_loss, mean_abs
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 import xgboost as xgb
-import lightgbm as lgb
+try:
+    import lightgbm as lgb
+    _LGB_AVAILABLE = True
+except OSError:
+    # libgomp.so.1 (OpenMP) missing on some Linux slim images.
+    # LightGBM model loading will be skipped; all other models still work.
+    lgb = None  # type: ignore[assignment]
+    _LGB_AVAILABLE = False
 
 MODEL_DIR = Path("models")
 MODEL_DIR.mkdir(exist_ok=True)
@@ -222,7 +229,12 @@ def train_xgboost(X: pd.DataFrame, y: pd.Series) -> xgb.XGBClassifier:
     return model
 
 
-def train_lightgbm(X: pd.DataFrame, y: pd.Series) -> lgb.LGBMClassifier:
+def train_lightgbm(X: pd.DataFrame, y: pd.Series):
+    if not _LGB_AVAILABLE:
+        raise RuntimeError(
+            "LightGBM is unavailable (libgomp missing). "
+            "Add 'libgomp1' to packages.txt and redeploy."
+        )
     model = lgb.LGBMClassifier(
         num_leaves=31,
         learning_rate=0.05,
@@ -384,6 +396,8 @@ def load_models(suffix: str = "latest") -> dict:
     """Load all saved base models. Returns {name: model}."""
     models = {}
     for name in ["logistic", "xgboost", "lightgbm", "random_forest"]:
+        if name == "lightgbm" and not _LGB_AVAILABLE:
+            continue  # skip — libgomp missing; rest of ensemble still works
         path = MODEL_DIR / f"{name}_game_{suffix}.pkl"
         if path.exists():
             try:
