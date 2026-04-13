@@ -9,6 +9,30 @@ import numpy as np
 import pandas as pd
 from typing import Optional
 
+# ── hoopR / ESPN extra team-box columns ───────────────────────────────────────
+# These come from sportsdataverse parquets (data_files/hoopr/nba_team_box_*.parquet)
+# and are joined into the game log by enrich_team_game_log_with_hoopr().
+HOOPR_TEAM_STAT_COLS: list[str] = [
+    "fast_break_points",
+    "points_in_paint",
+    "turnover_points",
+    "largest_lead",
+    "lead_changes",
+    "lead_percentage",
+]
+
+# hoopR PBP-derived per-game columns
+# (from data_files/hoopr/nba_pbp_team_features_*.parquet)
+HOOPR_PBP_STAT_COLS: list[str] = [
+    "clutch_pts",
+    "transition_pts_pct",
+    "run_count_6plus",
+    "max_run_scored",
+    "avg_shot_dist",
+    "pct_paint_shots",
+    "pct_three_range",
+]
+
 
 # ── Low-level utilities ────────────────────────────────────────────────────────
 
@@ -123,6 +147,96 @@ TEAM_STAT_COLS = [
 ]
 
 
+# ── hoopR enrichment helpers ──────────────────────────────────────────────────
+
+def enrich_team_game_log_with_hoopr(
+    game_log_df: pd.DataFrame,
+    hoopr_team_box_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Join hoopR team-box extra columns into the nba_api game log.
+
+    Matching key: (GAME_DATE, normalized team abbreviation).
+    Columns added: fast_break_points, points_in_paint, turnover_points,
+                   largest_lead, lead_changes, lead_percentage.
+    Rows that cannot be matched get NaN; those are later filled with 0 in
+    add_rolling_features() so no leakage and no model crash.
+    """
+    if hoopr_team_box_df is None or hoopr_team_box_df.empty:
+        return game_log_df
+    if "TEAM_ABBREVIATION" not in game_log_df.columns:
+        return game_log_df
+
+    from utils.hoopr_fetcher import normalize_abbr_to_nba  # lazy to avoid circular imports
+
+    hbox = hoopr_team_box_df.copy()
+    hbox.columns = hbox.columns.str.lower()
+
+    if "game_date" not in hbox.columns or "team_abbreviation" not in hbox.columns:
+        return game_log_df
+
+    extra_cols = [c for c in HOOPR_TEAM_STAT_COLS if c in hbox.columns]
+    if not extra_cols:
+        return game_log_df
+
+    hbox["_jdate"] = pd.to_datetime(hbox["game_date"]).dt.normalize()
+    hbox["_jabbr"] = hbox["team_abbreviation"].apply(normalize_abbr_to_nba)
+    hbox_slim = hbox[["_jdate", "_jabbr"] + extra_cols].drop_duplicates(["_jdate", "_jabbr"])
+
+    gl = game_log_df.copy()
+    gl["_jdate"] = pd.to_datetime(gl["GAME_DATE"]).dt.normalize()
+    gl["_jabbr"] = gl["TEAM_ABBREVIATION"].str.upper()
+
+    gl = gl.merge(hbox_slim, on=["_jdate", "_jabbr"], how="left")
+    gl = gl.drop(columns=["_jdate", "_jabbr"])
+    return gl
+
+
+def enrich_team_game_log_with_pbp_features(
+    game_log_df: pd.DataFrame,
+    pbp_features_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Join pre-aggregated PBP team features into the nba_api game log.
+
+    The pbp_features_df is the output of scripts/fetch_hoopr_data.py's
+    aggregate_pbp_to_team_features(), keyed on (game_date, team_id as ESPN id).
+    Because ESPN and nba_api use different game IDs, we join on (game_date, team_abbr)
+    via the hoopR player_box abbreviation when available, or skip gracefully.
+    """
+    if pbp_features_df is None or pbp_features_df.empty:
+        return game_log_df
+
+    pbp = pbp_features_df.copy()
+    pbp.columns = pbp.columns.str.lower()
+
+    if "game_date" not in pbp.columns:
+        return game_log_df
+
+    pbp_cols = [c for c in HOOPR_PBP_STAT_COLS if c in pbp.columns]
+    if not pbp_cols:
+        return game_log_df
+
+    # PBP features are keyed by ESPN team_id — we can't directly join to nba_api TEAM_ID.
+    # Use game_date + team_abbreviation if available in the pbp features frame.
+    if "team_abbreviation" not in pbp.columns:
+        return game_log_df
+
+    from utils.hoopr_fetcher import normalize_abbr_to_nba
+
+    pbp["_jdate"] = pd.to_datetime(pbp["game_date"]).dt.normalize()
+    pbp["_jabbr"] = pbp["team_abbreviation"].apply(normalize_abbr_to_nba)
+    pbp_slim = pbp[["_jdate", "_jabbr"] + pbp_cols].drop_duplicates(["_jdate", "_jabbr"])
+
+    gl = game_log_df.copy()
+    gl["_jdate"] = pd.to_datetime(gl["GAME_DATE"]).dt.normalize()
+    gl["_jabbr"] = gl["TEAM_ABBREVIATION"].str.upper()
+
+    gl = gl.merge(pbp_slim, on=["_jdate", "_jabbr"], how="left")
+    gl = gl.drop(columns=["_jdate", "_jabbr"])
+    return gl
+
+
 def engineer_team_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Full team feature pipeline on a team's game-log DataFrame.
@@ -157,6 +271,21 @@ def engineer_team_features(df: pd.DataFrame) -> pd.DataFrame:
     if {"OREB", "REB"}.issubset(df.columns):
         df["OREB_RATE"] = df["OREB"] / df["REB"].replace(0, np.nan)
         df["OREB_RATE"] = df["OREB_RATE"].fillna(0)
+
+    # ── hoopR team-box extras (present only when enriched via enrich_team_game_log_with_hoopr)
+    hoopr_box_present = [c for c in HOOPR_TEAM_STAT_COLS if c in df.columns]
+    if hoopr_box_present:
+        for col in hoopr_box_present:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        df = add_rolling_features(df, hoopr_box_present, windows=[5, 10])
+        df = add_season_averages(df, hoopr_box_present)
+
+    # ── hoopR PBP-derived extras (present when enriched via enrich_team_game_log_with_pbp_features)
+    hoopr_pbp_present = [c for c in HOOPR_PBP_STAT_COLS if c in df.columns]
+    if hoopr_pbp_present:
+        for col in hoopr_pbp_present:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        df = add_rolling_features(df, hoopr_pbp_present, windows=[5, 10])
 
     return df
 
@@ -262,10 +391,28 @@ def build_game_feature_vector(
     d["fg3_pct_diff_L10"]    = d.get("home_FG3_PCT_L10", 0)     - d.get("away_FG3_PCT_L10", 0)
     d["tov_diff_L10"]        = d.get("home_TOV_L10", 0)         - d.get("away_TOV_L10", 0)
 
+    # hoopR team-box differentials (only populated when hoopR data was loaded)
+    for stat in HOOPR_TEAM_STAT_COLS:
+        h_col = f"home_{stat}_L10"
+        a_col = f"away_{stat}_L10"
+        if h_col in d and a_col in d:
+            d[f"{stat}_diff_L10"] = d[h_col] - d[a_col]
+
+    # hoopR PBP differentials
+    for stat in HOOPR_PBP_STAT_COLS:
+        h_col = f"home_{stat}_L10"
+        a_col = f"away_{stat}_L10"
+        if h_col in d and a_col in d:
+            d[f"{stat}_diff_L10"] = d[h_col] - d[a_col]
+
     return pd.Series(d)
 
 
-def build_training_dataset(game_log_df: pd.DataFrame) -> pd.DataFrame:
+def build_training_dataset(
+    game_log_df: pd.DataFrame,
+    hoopr_team_box_df: pd.DataFrame | None = None,
+    hoopr_pbp_features_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """
     Build a model-ready training DataFrame from a full league game log.
 
@@ -276,11 +423,18 @@ def build_training_dataset(game_log_df: pd.DataFrame) -> pd.DataFrame:
     ----------
     game_log_df : pd.DataFrame
         Concatenated output of get_league_game_log() across multiple seasons.
-        Columns expected: GAME_ID, GAME_DATE, TEAM_ID, MATCHUP, WL, PTS, ...
+    hoopr_team_box_df : optional hoopR team box DataFrame to enrich features.
+    hoopr_pbp_features_df : optional pre-aggregated PBP team features.
     """
     game_log_df = game_log_df.copy()
     game_log_df["GAME_DATE"] = pd.to_datetime(game_log_df["GAME_DATE"])
     game_log_df["IS_HOME"] = game_log_df["MATCHUP"].apply(parse_is_home)
+
+    # Enrich with hoopR data before per-team feature engineering
+    if hoopr_team_box_df is not None and not hoopr_team_box_df.empty:
+        game_log_df = enrich_team_game_log_with_hoopr(game_log_df, hoopr_team_box_df)
+    if hoopr_pbp_features_df is not None and not hoopr_pbp_features_df.empty:
+        game_log_df = enrich_team_game_log_with_pbp_features(game_log_df, hoopr_pbp_features_df)
 
     # Engineer features per team across all their games
     team_features: dict[int, pd.DataFrame] = {}
@@ -328,20 +482,28 @@ def build_training_dataset(game_log_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).reset_index(drop=True)
 
 
-def get_training_dataset(season: str, season_type: str = "Regular Season") -> pd.DataFrame:
+def get_training_dataset(
+    season: str,
+    season_type: str = "Regular Season",
+    use_hoopr: bool = True,
+) -> pd.DataFrame:
     """
     Disk-backed training dataset for a single season.
 
-    Reads from data_files/historical/training_dataset_{season}_{season_type}.parquet
-    if it exists. Otherwise builds it from the game log and saves it.
-    This lets preload_cache.py pre-build datasets so the Model Performance
-    page never has to compute them at page-load time.
+    Reads parquet if cached. Otherwise builds from game log (+ optional hoopR
+    enrichment) and saves.  pass use_hoopr=False to skip hoopR enrichment.
     """
     from pathlib import Path
-    from utils.data_fetcher import HIST_DIR, get_league_game_log_cached  # lazy import avoids circular dep
+    from utils.data_fetcher import HIST_DIR, get_league_game_log_cached  # lazy
+    from utils.hoopr_fetcher import (
+        get_hoopr_cache_path,
+        get_pbp_features_path,
+        season_str_to_int,
+    )
 
-    tag  = season_type.replace(" ", "_")
-    path = HIST_DIR / f"training_dataset_{season.replace('-', '_')}_{tag}.parquet"
+    tag     = season_type.replace(" ", "_")
+    suffix  = "_hoopr" if use_hoopr else ""
+    path    = HIST_DIR / f"training_dataset_{season.replace('-', '_')}_{tag}{suffix}.parquet"
 
     if path.exists():
         return pd.read_parquet(path)
@@ -350,7 +512,23 @@ def get_training_dataset(season: str, season_type: str = "Regular Season") -> pd
     if game_log.empty:
         return pd.DataFrame()
 
-    df = build_training_dataset(game_log)
+    hoopr_box = hoopr_pbp = None
+    if use_hoopr:
+        season_int = season_str_to_int(season)
+        tb_path = get_hoopr_cache_path("team_box", season_int)
+        if tb_path.exists():
+            try:
+                hoopr_box = pd.read_parquet(tb_path)
+            except Exception:
+                pass
+        pbp_path = get_pbp_features_path(season_int)
+        if pbp_path.exists():
+            try:
+                hoopr_pbp = pd.read_parquet(pbp_path)
+            except Exception:
+                pass
+
+    df = build_training_dataset(game_log, hoopr_box, hoopr_pbp)
     if not df.empty:
         df.to_parquet(path, index=False)
     return df

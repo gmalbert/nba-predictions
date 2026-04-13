@@ -25,6 +25,7 @@ from utils.data_fetcher import (
     build_ref_lookup,
     get_multi_book_odds,
     get_best_lines,
+    get_line_movement,
     expected_value,
     kelly_criterion,
     BOOK_LABELS,
@@ -230,6 +231,97 @@ else:
 
     # Pre-build team feature rows once (cached) — used for O/U predictions
     team_feat_map = _build_team_features_map(CURRENT_SEASON) if totals_model is not None else {}
+
+    # ── Bankroll Manager ──────────────────────────────────────────────────────
+    if show_odds and best_lines_list:
+        with st.expander("💰 Bankroll Manager", expanded=False):
+            bkr_col1, _ = st.columns([1, 3])
+            with bkr_col1:
+                bankroll = st.number_input(
+                    "Starting Bankroll ($)",
+                    min_value=100,
+                    max_value=1_000_000,
+                    value=1_000,
+                    step=100,
+                    key="bkr_input",
+                    help="Bet sizes use Quarter-Kelly (full Kelly ÷ 4). For entertainment only.",
+                )
+            bkr_rows = []
+            for _, g in preds_df.iterrows():
+                h_name      = g["home_team"]
+                a_name      = g["away_team"]
+                g_home_prob = g["home_win_prob"]
+                g_away_prob = g["away_win_prob"]
+                bl_e        = best_lines_lookup.get(_team_key(h_name))
+                h_ml        = bl_e.get("best_home_ml") if bl_e else None
+                a_ml        = bl_e.get("best_away_ml") if bl_e else None
+                h_book      = bl_e.get("best_home_ml_book", "") if bl_e else ""
+                a_book      = bl_e.get("best_away_ml_book", "") if bl_e else ""
+                for prob, ml, team, side, book in [
+                    (g_home_prob, h_ml, h_name, "Home ML", h_book),
+                    (g_away_prob, a_ml, a_name, "Away ML", a_book),
+                ]:
+                    if ml is None:
+                        continue
+                    ev = expected_value(prob, ml)
+                    if ev <= 0:
+                        continue
+                    qkelly   = kelly_criterion(prob, ml) * 0.25
+                    bet_size = round(bankroll * qkelly, 2)
+                    bkr_rows.append({
+                        "Matchup":    f"{a_name} @ {h_name}",
+                        "Bet":        f"{team} ({side})",
+                        "Book":       book,
+                        "Odds":       int(ml),
+                        "Model Prob": prob,
+                        "EV / $100":  ev,
+                        "Kelly %":    qkelly * 100,
+                        "Bet ($)":    bet_size,
+                    })
+
+            if bkr_rows:
+                bkr_df = pd.DataFrame(bkr_rows).sort_values("EV / $100", ascending=False)
+                disp = bkr_df.copy()
+                disp["Model Prob"] = disp["Model Prob"].map(lambda v: f"{v:.0%}")
+                disp["EV / $100"]  = disp["EV / $100"].map(lambda v: f"${v:+.2f}")
+                disp["Kelly %"]    = disp["Kelly %"].map(lambda v: f"{v:.1f}%")
+                disp["Bet ($)"]    = disp["Bet ($)"].map(lambda v: f"${v:,.2f}")
+                disp["Odds"]       = disp["Odds"].map(lambda v: f"{v:+d}")
+                st.dataframe(disp, hide_index=True, width='stretch')
+
+                total_risk    = bkr_df["Bet ($)"].sum()
+                total_exp_pnl = (bkr_df["EV / $100"] / 100.0 * bkr_df["Bet ($)"]).sum()
+                rm1, rm2, rm3 = st.columns(3)
+                rm1.metric("Today's +EV Bets", len(bkr_df))
+                rm2.metric("Total Risk",       f"${total_risk:,.2f} ({total_risk / bankroll:.1%})")
+                rm3.metric("Expected Profit",  f"${total_exp_pnl:+,.2f}")
+                st.caption(
+                    "Quarter-Kelly sizing. Past edge ≠ future results. "
+                    "For entertainment purposes only."
+                )
+            else:
+                st.info(
+                    "No +EV bets found today. Either no live odds are available "
+                    "or the model has no edge over current lines."
+                )
+
+    st.markdown("---")
+
+    def _mv_str(label: str, old, new, as_int: bool = False) -> str:
+        """Format a line-movement string with direction arrow and delta."""
+        if old is None or new is None or pd.isna(old) or pd.isna(new):
+            return ""
+        if as_int:
+            old_v = int(round(float(old)))
+            new_v = int(round(float(new)))
+            diff  = new_v - old_v
+            arrow = "▲" if diff > 0 else "▼" if diff < 0 else "→"
+            return f"{label}: {old_v:+d} {arrow} {new_v:+d} ({diff:+d})"
+        old_v = float(old)
+        new_v = float(new)
+        diff  = new_v - old_v
+        arrow = "▲" if diff > 0 else "▼" if diff < 0 else "→"
+        return f"{label}: {old_v:+.1f} {arrow} {new_v:+.1f} ({diff:+.1f})"
 
     for _, game in preds_df.iterrows():
         home  = game["home_team"]
@@ -514,6 +606,56 @@ else:
 
                         elif show_odds:
                             st.caption("_No live odds available from sbrscrape or The Odds API for this game._")
+
+                        # ── Line movement ──────────────────────────────────
+                        lm_df = get_line_movement(
+                            home.split()[-1],
+                            away.split()[-1],
+                            date=selected_date.strftime("%Y-%m-%d"),
+                        )
+                        if len(lm_df) >= 2:
+                            st.markdown("##### 📉 Line Movement")
+                            opening   = lm_df.iloc[0]
+                            current   = lm_df.iloc[-1]
+
+                            spread_str = _mv_str(
+                                "Spread",
+                                opening["consensus_spread"],
+                                current["consensus_spread"],
+                            )
+                            total_str  = _mv_str(
+                                "Total",
+                                opening["consensus_total"],
+                                current["consensus_total"],
+                            )
+                            hml_str    = _mv_str(
+                                f"{home} ML",
+                                opening["best_home_ml"],
+                                current["best_home_ml"],
+                                as_int=True,
+                            )
+                            aml_str    = _mv_str(
+                                f"{away} ML",
+                                opening["best_away_ml"],
+                                current["best_away_ml"],
+                                as_int=True,
+                            )
+
+                            lm_parts = [s for s in [spread_str, total_str, hml_str, aml_str] if s]
+                            if lm_parts:
+                                for part in lm_parts:
+                                    st.caption(part)
+                                first_ts = opening["fetched_at"].strftime("%I:%M %p")
+                                last_ts  = current["fetched_at"].strftime("%I:%M %p")
+                                st.caption(
+                                    f"_Opening snapshot: {first_ts} · Latest: {last_ts} · "
+                                    f"{len(lm_df)} snapshot(s) today_"
+                                )
+                        elif len(lm_df) == 1:
+                            st.caption(
+                                "_Line movement: only 1 snapshot so far today. "
+                                "Run `python scripts/daily_update.py --snapshot` periodically._"
+                            )
 
 # Injury report — rendered regardless of whether predictions loaded
 if show_injuries:
