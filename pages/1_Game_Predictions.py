@@ -11,6 +11,7 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from utils.data_fetcher import (
     get_league_game_log_cached,
@@ -144,7 +145,7 @@ def _ev_badge(ev: float) -> str:
 with st.sidebar:
     st.image("data_files/logo.png", width=200)
     st.markdown("---")
-    selected_date = st.date_input("Game Date", value=datetime.today())
+    selected_date = st.date_input("Game Date", value=datetime.now(tz=ZoneInfo("America/New_York")).date())
     conf_filter   = st.selectbox("Confidence Filter", ["All", "High", "Medium", "Low"])
     show_injuries = st.checkbox("Show injury report", value=False)
     show_odds     = st.checkbox("Show multi-book odds", value=True)

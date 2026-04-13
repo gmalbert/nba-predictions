@@ -11,7 +11,15 @@ import numpy as np
 from pathlib import Path
 import requests
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import streamlit as st
+
+_ET = ZoneInfo("America/New_York")
+
+
+def _today_et() -> datetime:
+    """Return the current datetime in US/Eastern time (NBA schedule timezone)."""
+    return datetime.now(tz=_ET)
 
 # nba_api imports
 from nba_api.stats.endpoints import (
@@ -81,7 +89,7 @@ def get_today_scoreboard(game_date: str | None = None) -> tuple[pd.DataFrame, pd
     """
     try:
         if game_date is None:
-            game_date = datetime.today().strftime("%m/%d/%Y")
+            game_date = _today_et().strftime("%m/%d/%Y")
         _sleep()
         sb = scoreboardv3.ScoreboardV3(game_date=game_date, league_id="00")
 
@@ -319,7 +327,7 @@ def get_team_estimated_metrics_cached(season: str) -> pd.DataFrame:
 def get_standings(season: str) -> pd.DataFrame:
     """Current league standings from LeagueStandingsV3. Disk-cached with same-day freshness."""
     path = HIST_DIR / f"standings_{season.replace('-', '_')}.parquet"
-    today_str = datetime.today().strftime("%Y-%m-%d")
+    today_str = _today_et().strftime("%Y-%m-%d")
     if path.exists():
         try:
             cached = pd.read_parquet(path)
@@ -748,7 +756,7 @@ def get_line_movement(home_team: str, away_team: str, date: str | None = None) -
     if not ODDS_SNAPSHOTS_PATH.exists():
         return pd.DataFrame()
     if date is None:
-        date = datetime.today().strftime("%Y-%m-%d")
+        date = _today_et().strftime("%Y-%m-%d")
 
     try:
         df = pd.read_parquet(ODDS_SNAPSHOTS_PATH)
@@ -946,7 +954,7 @@ def run_and_cache_predictions(date_str: str | None = None) -> pd.DataFrame:
     Run the prediction pipeline for *date_str* (YYYY-MM-DD, defaults to today)
     and persist the result to disk.  Safe to call from non-Streamlit scripts.
     """
-    today_str = date_str or datetime.today().strftime("%Y-%m-%d")
+    today_str = date_str or _today_et().strftime("%Y-%m-%d")
     # Convert to MM/DD/YYYY for predict_today_games
     try:
         mm_dd_yyyy = datetime.strptime(today_str, "%Y-%m-%d").strftime("%m/%d/%Y")
@@ -974,9 +982,9 @@ def get_today_predictions(game_date_mmddyyyy: str | None = None) -> pd.DataFrame
         try:
             date_str = datetime.strptime(game_date_mmddyyyy, "%m/%d/%Y").strftime("%Y-%m-%d")
         except ValueError:
-            date_str = datetime.today().strftime("%Y-%m-%d")
+            date_str = _today_et().strftime("%Y-%m-%d")
     else:
-        date_str = datetime.today().strftime("%Y-%m-%d")
+        date_str = _today_et().strftime("%Y-%m-%d")
 
     path = _predictions_path(date_str)
     if path.exists():

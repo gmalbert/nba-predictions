@@ -1,7 +1,10 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from footer import add_betting_oracle_footer
+
+_ET = ZoneInfo("America/New_York")
 
 # --- Page Configuration (called ONCE here; sub-pages must NOT call set_page_config) ---
 st.set_page_config(
@@ -58,7 +61,7 @@ def home_page():
         st.markdown(
             f"<h1 style='margin-bottom:0'>Betting Baseline</h1>"
             f"<p style='color:#888;margin-top:2px'>NBA Predictions · {CURRENT_SEASON} · "
-            f"{datetime.today().strftime('%A, %B %d, %Y')}</p>",
+            f"{datetime.now(tz=_ET).strftime('%A, %B %d, %Y')}</p>",
             unsafe_allow_html=True,
         )
 
