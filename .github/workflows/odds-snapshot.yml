@@ -1,0 +1,96 @@
+name: NBA Odds Snapshot
+
+# Takes a snapshot of live odds every 30 minutes during game hours so the
+# Line Movement section of page 1 has multiple data points per day.
+#
+# Game hours window: 2 PM ET – 1 AM ET.
+# UTC offsets: ET = UTC-5 (EST) / UTC-4 (EDT, Mar–Nov).
+# Using UTC-4 (safer buffer so we never miss a 7 PM ET tip-off):
+#   2 PM ET = 18:00 UTC,  1 AM ET = 05:00 UTC
+
+on:
+  schedule:
+    - cron: '*/30 18-23 * * *'   # 2 PM – 7 PM ET
+    - cron: '*/30 0-5 * * *'     # 7 PM – 1 AM ET
+  workflow_dispatch:              # manual trigger
+
+jobs:
+  snapshot-odds:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # ── Checkout ─────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      # ── Season gate ───────────────────────────────────────────────────────────
+      - name: Check NBA season window
+        id: season_check
+        run: |
+          python3 - <<'EOF'
+          from datetime import datetime
+          import os
+
+          now   = datetime.utcnow()
+          month = now.month
+          day   = now.day
+          force = "${{ github.event_name }}" == "workflow_dispatch"
+
+          in_season = (
+              (month == 10 and day >= 15) or
+              (month in [11, 12, 1, 2, 3]) or
+              (month == 4 and day <= 20)
+          )
+
+          active = in_season or force
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"active={str(active).lower()}\n")
+
+          print(f"Date: {now.date()}  in_season={in_season}  force={force}  active={active}")
+          EOF
+
+      - name: Skip if outside NBA season
+        if: steps.season_check.outputs.active == 'false'
+        run: echo "Outside NBA season window — skipping odds snapshot."
+
+      # ── Python setup ──────────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        if: steps.season_check.outputs.active == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        if: steps.season_check.outputs.active == 'true'
+        run: |
+          pip install --upgrade pip
+          grep -v 'playwright' requirements.txt > /tmp/requirements_snapshot.txt
+          pip install -r /tmp/requirements_snapshot.txt
+
+      # ── Snapshot ──────────────────────────────────────────────────────────────
+      - name: Snapshot live odds
+        if: steps.season_check.outputs.active == 'true'
+        run: python scripts/daily_update.py --snapshot
+        continue-on-error: true   # don't fail if sbrscrape is temporarily unavailable
+
+      # ── Commit ────────────────────────────────────────────────────────────────
+      - name: Commit snapshot
+        if: steps.season_check.outputs.active == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name  "github-actions[bot]"
+          git add data_files/odds_snapshots.parquet
+          if git diff --staged --quiet; then
+            echo "No new odds snapshot data."
+          else
+            TS=$(date -u +%Y-%m-%dT%H:%M)
+            git commit -m "chore: odds snapshot ${TS} [skip ci]"
+            git push
+            echo "Snapshot committed and pushed."
+          fi
