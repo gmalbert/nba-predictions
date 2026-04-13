@@ -44,6 +44,7 @@ from utils.model_utils import (
     save_models,
     MODEL_DIR,
     FEATURE_COLS_GAME,
+    FEATURE_COLS_GAME_HOOPR,
     # Calibration
     calibrate_models,
     save_calibrated_models,
@@ -115,9 +116,38 @@ def train_elo(raw: pd.DataFrame) -> EloSystem:
 
 # ── Step 3: Build feature dataset ─────────────────────────────────────────────
 
-def build_features(raw: pd.DataFrame) -> pd.DataFrame:
+def load_hoopr_data_for_training() -> "tuple[pd.DataFrame | None, pd.DataFrame | None]":
+    """Load hoopR team box and pre-aggregated PBP features from disk for all training seasons."""
+    from utils.hoopr_fetcher import (
+        load_hoopr_team_box_all,
+        load_pbp_features_all,
+        season_str_to_int,
+    )
+    from utils.data_fetcher import HISTORICAL_SEASONS
+
+    season_ints = [season_str_to_int(s) for s in HISTORICAL_SEASONS]
+    hoopr_box = load_hoopr_team_box_all(season_ints)
+    hoopr_pbp = load_pbp_features_all(season_ints)
+    if hoopr_box.empty:
+        log("  [hoopr] No team box data on disk — run scripts/fetch_hoopr_data.py --all-seasons first.")
+        hoopr_box = None
+    else:
+        log(f"  [hoopr] team_box: {len(hoopr_box):,} rows")
+    if hoopr_pbp is None or hoopr_pbp.empty:
+        log("  [hoopr] No PBP features on disk — PBP enrichment will be skipped.")
+        hoopr_pbp = None
+    else:
+        log(f"  [hoopr] pbp_features: {len(hoopr_pbp):,} rows")
+    return hoopr_box, hoopr_pbp
+
+
+def build_features(
+    raw: pd.DataFrame,
+    hoopr_box: "pd.DataFrame | None" = None,
+    hoopr_pbp: "pd.DataFrame | None" = None,
+) -> pd.DataFrame:
     log("Building feature dataset (this may take 1-2 minutes)...")
-    df = build_training_dataset(raw)
+    df = build_training_dataset(raw, hoopr_box, hoopr_pbp)
     df = df.dropna(subset=["TARGET"])
     df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"])
     log(f"  ✓ Feature dataset: {len(df):,} games")
@@ -126,7 +156,7 @@ def build_features(raw: pd.DataFrame) -> pd.DataFrame:
 
 # ── Step 4: Train & evaluate ───────────────────────────────────────────────────
 
-def train_and_evaluate(df: pd.DataFrame) -> tuple[dict, dict, dict]:
+def train_and_evaluate(df: pd.DataFrame, feature_cols: list[str] | None = None) -> tuple[dict, dict, dict]:
     """
     Temporal train / calibration / test split.
 
@@ -149,7 +179,7 @@ def train_and_evaluate(df: pd.DataFrame) -> tuple[dict, dict, dict]:
     if not test_df.empty:
         log(f"  Test  window:    {test_df['GAME_DATE'].min().date()} → {test_df['GAME_DATE'].max().date()}")
 
-    X_train, feature_cols = get_model_features(train_df)
+    X_train, feature_cols = get_model_features(train_df, feature_cols)
     y_train = train_df["TARGET"]
 
     log("\nTraining base models...")
@@ -226,6 +256,11 @@ def main():
     log(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log("=" * 60 + "\n")
 
+    parser = argparse.ArgumentParser(description="Train NBA prediction models")
+    parser.add_argument("--hoopr-features", action="store_true",
+                        help="Enrich training data with hoopR team-box and PBP features")
+    args, _ = parser.parse_known_args()
+
     start = time.time()
 
     # 1. Load
@@ -234,13 +269,23 @@ def main():
     # 2. Elo
     elo = train_elo(raw)
 
-    # 3. Features
-    df = build_features(raw)
+    # 3. (Optional) hoopR enrichment
+    hoopr_box = hoopr_pbp = None
+    if args.hoopr_features:
+        log("\nLoading hoopR enrichment data...")
+        hoopr_box, hoopr_pbp = load_hoopr_data_for_training()
 
-    # 4. Walk-forward CV (5-fold TimeSeriesSplit on full feature dataset)
+    # 4. Features
+    df = build_features(raw, hoopr_box, hoopr_pbp)
+
+    # 4b. Select feature columns
+    active_feature_cols = FEATURE_COLS_GAME_HOOPR if (hoopr_box is not None or hoopr_pbp is not None) else FEATURE_COLS_GAME
+    log(f"  Active feature set: {len(active_feature_cols)} columns" + (" (hoopR)" if active_feature_cols is FEATURE_COLS_GAME_HOOPR else " (standard)"))
+
+    # 5. Walk-forward CV (5-fold TimeSeriesSplit on full feature dataset)
     log("\nRunning walk-forward cross-validation (5 folds)...")
     try:
-        cv_df = walk_forward_eval(df, n_splits=5)
+        cv_df = walk_forward_eval(df, n_splits=5, feature_cols=active_feature_cols)
         if not cv_df.empty:
             cv_acc  = float(cv_df["accuracy"].mean())
             cv_ll   = float(cv_df["log_loss"].mean())
@@ -260,8 +305,8 @@ def main():
         log(f"  ⚠ Walk-forward CV failed: {e}")
         cv_results = {}
 
-    # 5. Train + Evaluate (with calibration)
-    base_models, cal_models, metrics = train_and_evaluate(df)
+    # 6. Train + Evaluate (with calibration)
+    base_models, cal_models, metrics = train_and_evaluate(df, feature_cols=active_feature_cols)
     if cv_results:
         metrics.update(cv_results)
 

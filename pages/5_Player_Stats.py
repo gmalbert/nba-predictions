@@ -147,6 +147,8 @@ if game_log.empty:
     st.stop()
 
 df = engineer_player_features(game_log).sort_values("GAME_DATE", ascending=False)
+if "GAME_DATE" in df.columns:
+    df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"]).dt.date
 n = n_games(log_length)
 df_display = df.head(n) if n else df
 df_full    = df.sort_values("GAME_DATE")

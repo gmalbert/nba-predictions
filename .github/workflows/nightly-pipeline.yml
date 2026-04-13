@@ -127,7 +127,7 @@ jobs:
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name  "github-actions[bot]"
-          git add data_files/historical/
+          git add data_files/
           # Only commit if there are actual changes
           if git diff --staged --quiet; then
             echo "No data changes to commit."

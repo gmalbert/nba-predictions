@@ -73,6 +73,35 @@ FEATURE_COLS_GAME_ODDS = FEATURE_COLS_GAME_EXTENDED + [
     "odds_disagreement_total",
 ]
 
+# hoopR feature set — adds ESPN team-box and PBP-derived columns.
+# Requires sportsdataverse parquets in data_files/hoopr/ and retraining.
+# Activate with: python scripts/train_models.py --hoopr-features
+FEATURE_COLS_GAME_HOOPR = FEATURE_COLS_GAME_EXTENDED + [
+    # Team-box extras (lead control, paint, transition)
+    "home_fast_break_points_L10",    "away_fast_break_points_L10",
+    "home_points_in_paint_L10",      "away_points_in_paint_L10",
+    "home_turnover_points_L10",      "away_turnover_points_L10",
+    "home_lead_percentage_L10",      "away_lead_percentage_L10",
+    "home_largest_lead_L10",         "away_largest_lead_L10",
+    "home_lead_changes_L10",         "away_lead_changes_L10",
+    "fast_break_points_diff_L10",
+    "points_in_paint_diff_L10",
+    "turnover_points_diff_L10",
+    "lead_percentage_diff_L10",
+    "largest_lead_diff_L10",
+    # PBP-derived extras (clutch, run momentum, shot quality)
+    "home_clutch_pts_L10",           "away_clutch_pts_L10",
+    "home_run_count_6plus_L10",      "away_run_count_6plus_L10",
+    "home_transition_pts_pct_L10",   "away_transition_pts_pct_L10",
+    "home_avg_shot_dist_L10",        "away_avg_shot_dist_L10",
+    "home_pct_paint_shots_L10",      "away_pct_paint_shots_L10",
+    "home_pct_three_range_L10",      "away_pct_three_range_L10",
+    "clutch_pts_diff_L10",
+    "run_count_6plus_diff_L10",
+    "transition_pts_pct_diff_L10",
+    "avg_shot_dist_diff_L10",
+]
+
 
 # ── Elo Rating System ──────────────────────────────────────────────────────────
 

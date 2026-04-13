@@ -32,6 +32,7 @@ from utils.model_utils import (
     EloSystem,
     MODEL_DIR,
     FEATURE_COLS_GAME,
+    FEATURE_COLS_GAME_HOOPR,
     load_totals_model,
     FEATURE_COLS_TOTALS,
 )
@@ -98,6 +99,28 @@ def predict_today_games(
         return pd.DataFrame()
 
     game_log["GAME_DATE"] = pd.to_datetime(game_log["GAME_DATE"])
+
+    # Enrich with hoopR data from disk cache (no live fetching)
+    try:
+        from utils.hoopr_fetcher import (
+            load_hoopr_team_box_all,
+            load_pbp_features_all,
+            season_str_to_int,
+        )
+        from utils.feature_engine import (
+            enrich_team_game_log_with_hoopr,
+            enrich_team_game_log_with_pbp_features,
+        )
+        current_int = season_str_to_int(CURRENT_SEASON)
+        hoopr_box = load_hoopr_team_box_all([current_int])
+        if not hoopr_box.empty:
+            game_log = enrich_team_game_log_with_hoopr(game_log, hoopr_box)
+        hoopr_pbp = load_pbp_features_all([current_int])
+        if not hoopr_pbp.empty:
+            game_log = enrich_team_game_log_with_pbp_features(game_log, hoopr_pbp)
+    except Exception:
+        pass  # hoopR data unavailable — fall back to standard features
+
     team_feat: dict[int, pd.DataFrame] = {}
     for tid, grp in game_log.groupby("TEAM_ID"):
         team_feat[int(tid)] = engineer_team_features(grp.sort_values("GAME_DATE"))
@@ -163,7 +186,11 @@ def predict_today_games(
             home_row = hf.sort_values("GAME_DATE").iloc[-1]
             away_row = af.sort_values("GAME_DATE").iloc[-1]
             fv = build_game_feature_vector(home_row, away_row)
-            avail = [c for c in FEATURE_COLS_GAME if c in fv.index]
+            # Use the widest available feature set the model supports
+            for candidate_cols in (FEATURE_COLS_GAME_HOOPR, FEATURE_COLS_GAME):
+                avail = [c for c in candidate_cols if c in fv.index]
+                if avail:
+                    break
             X = pd.DataFrame([fv[avail].fillna(0)])
             try:
                 ml_prob = float(ensemble_predict_proba(models, X)[0])

@@ -9,10 +9,11 @@ A Streamlit-powered data analytics platform for NBA game predictions and DraftKi
 - **Team Stats**: Interactive team dashboards with rolling averages, rankings, and comparisons
 - **Player Stats**: Individual player analysis, game logs, splits, and trend charts
 - **Model Performance**: Accuracy tracking, calibration plots, and backtesting results
-
+- **hoopR Feature Enrichment**: Team and PBP-derived stats are pre-cached and used to improve model predictions.
 ## Data Sources
 
 - [**nba_api**](https://github.com/swar/nba_api) — Primary data source for game data, box scores, player stats, and league standings
+- **sportsdataverse hoopR** — Team box and play-by-play derived features used for model enrichment
 - **Basketball Reference** — Advanced metrics, four factors, and historical data
 - **The Odds API** — Market odds for model calibration and edge detection
 - **ESPN / Rotowire** — Injury reports and lineup confirmations
@@ -44,6 +45,9 @@ See the [docs/](docs/) folder for detailed planning:
 - Implemented `scripts/preload_cache.py` to prewarm parquet cache + run predictions; integrated into `.github/workflows/nightly-pipeline.yml`.
 - Added `get_today_predictions()` and `run_and_cache_predictions()` in `utils/data_fetcher.py`.
 - Added disk cache for `get_standings()` with same-day freshness guard in `utils/data_fetcher.py`.
+- Added hoopR integration with pre-cached team box and PBP-derived features via `utils/hoopr_fetcher.py` and `scripts/fetch_hoopr_data.py`.
+- Added new daily workflow `.github/workflows/hoopr-daily.yml` to refresh hoopR data and commit updated parquet caches.
+- Added `refresh_hoopr_data()` to `scripts/preload_cache.py` so nightly cache warming includes hoopR features.
 - Fixed injury report team field parsing in `get_injury_report()` (`team_entry.displayName` instead of nested `team.displayName`).
 - Moved injury report section to top-level in `pages/1_Game_Predictions.py` so it renders independent of prediction success.
 - Verified and corrected column mapping in Streamlit UI:

@@ -11,6 +11,7 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from pathlib import Path
+from datetime import datetime, timezone
 
 from utils.data_fetcher import (
     CURRENT_SEASON,
@@ -62,6 +63,15 @@ elo_path = MODEL_DIR / "elo_system.pkl"
 st.subheader("📊 Summary Metrics")
 if metrics:
     eval_date = metrics.get("eval_date", "Unknown")
+    if isinstance(eval_date, str) and eval_date != "Unknown":
+        try:
+            eval_dt = pd.to_datetime(eval_date)
+            if eval_dt.tzinfo is None:
+                eval_dt = eval_dt.tz_localize(timezone.utc)
+            eval_dt = eval_dt.tz_convert(datetime.now().astimezone().tzinfo)
+            eval_date = eval_dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+        except Exception:
+            pass
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Accuracy",    f"{metrics.get('accuracy', 0):.1%}")
     m2.metric("Log Loss",    f"{metrics.get('log_loss', 0):.4f}")

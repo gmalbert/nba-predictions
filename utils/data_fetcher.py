@@ -392,6 +392,7 @@ def get_team_info(team_id: int) -> dict:
 def get_injury_report() -> pd.DataFrame:
     """
     Current NBA injury data from ESPN's public JSON API.
+    Falls back to the last committed disk snapshot if the live request fails.
     Returns columns: team, player_name, position, status, description.
     """
     url = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
@@ -413,7 +414,50 @@ def get_injury_report() -> pd.DataFrame:
                 })
         return pd.DataFrame(records)
     except Exception:
+        # Fall back to last committed disk snapshot
+        if INJURY_CACHE_PATH.exists():
+            try:
+                df = pd.read_parquet(INJURY_CACHE_PATH)
+                return df.drop(columns=["fetched_at"], errors="ignore")
+            except Exception:
+                pass
         return pd.DataFrame(columns=["team", "player_name", "position", "status", "description"])
+
+
+def snapshot_injury_report() -> int:
+    """
+    Fetch the ESPN injury report and persist to
+    ``data_files/historical/injury_report_latest.parquet``.
+
+    Safe to call from script context (no @st.cache_data).
+    Returns the number of rows written (0 on failure).
+    """
+    url = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        records = []
+        for team_entry in data.get("injuries", []):
+            team_name = team_entry.get("displayName", "")
+            for inj in team_entry.get("injuries", []):
+                athlete = inj.get("athlete", {})
+                records.append({
+                    "team":        team_name,
+                    "player_name": athlete.get("displayName", ""),
+                    "position":    athlete.get("position", {}).get("abbreviation", ""),
+                    "status":      inj.get("status", "Unknown"),
+                    "description": inj.get("shortComment", ""),
+                    "fetched_at":  datetime.now().isoformat(timespec="seconds"),
+                })
+        df = pd.DataFrame(records) if records else pd.DataFrame(
+            columns=["team", "player_name", "position", "status", "description", "fetched_at"]
+        )
+        HIST_DIR.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(INJURY_CACHE_PATH, index=False)
+        return len(df)
+    except Exception:
+        return 0
 
 
 # ── Odds Data (The Odds API) ───────────────────────────────────────────────────
@@ -604,6 +648,129 @@ def get_best_lines(games: list[dict]) -> list[dict]:
             "all_totals":            {BOOK_LABELS.get(k, k): v for k, v in totals.items()},
         })
     return result
+
+
+# ── Line Movement (odds snapshots) ─────────────────────────────────────────────
+
+ODDS_SNAPSHOTS_PATH  = DATA_DIR / "odds_snapshots.parquet"
+INJURY_CACHE_PATH    = HIST_DIR / "injury_report_latest.parquet"
+
+_SNAPSHOT_COLS = [
+    "fetched_at", "date", "home_team", "away_team",
+    "consensus_spread", "consensus_total",
+    "best_home_ml", "best_away_ml",
+]
+
+
+def _fetch_live_odds_direct() -> list[dict]:
+    """Fetch live odds from sbrscrape — no @st.cache_data, safe in script context."""
+    try:
+        import io, contextlib
+        from sbrscrape import Scoreboard
+        with contextlib.redirect_stdout(io.StringIO()):
+            sb = Scoreboard(sport="NBA")
+        return list(getattr(sb, "games", None) or [])
+    except Exception:
+        return []
+
+
+def snapshot_odds(games: list[dict] | None = None) -> int:
+    """
+    Persist a timestamped snapshot of current live odds to
+    ``data_files/odds_snapshots.parquet``.
+
+    Parameters
+    ----------
+    games : optional output of ``get_multi_book_odds()``. Fetched live if None.
+
+    Returns the number of rows written (0 on error or no games).
+    """
+    if games is None:
+        games = _fetch_live_odds_direct()
+    if not games:
+        return 0
+
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    rows = []
+    for g in games:
+        home_mls = {k: v for k, v in (g.get("home_ml") or {}).items() if v is not None}
+        away_mls = {k: v for k, v in (g.get("away_ml") or {}).items() if v is not None}
+        spreads  = {k: v for k, v in (g.get("home_spread") or {}).items() if v is not None}
+        totals   = {k: v for k, v in (g.get("total") or {}).items() if v is not None}
+
+        rows.append({
+            "fetched_at":       now.isoformat(timespec="seconds"),
+            "date":             today,
+            "home_team":        g.get("home_team", ""),
+            "away_team":        g.get("away_team", ""),
+            "consensus_spread": float(np.mean(list(spreads.values()))) if spreads else None,
+            "consensus_total":  float(np.mean(list(totals.values()))) if totals else None,
+            "best_home_ml":     home_mls[max(home_mls, key=home_mls.get)] if home_mls else None,
+            "best_away_ml":     (away_mls[max(away_mls, key=away_mls.get)] if away_mls else None),
+        })
+
+    if not rows:
+        return 0
+
+    new_df = pd.DataFrame(rows)[_SNAPSHOT_COLS]
+
+    if ODDS_SNAPSHOTS_PATH.exists():
+        try:
+            existing = pd.read_parquet(ODDS_SNAPSHOTS_PATH)
+            # Deduplicate: keep all rows (each snapshot is a unique timestamp)
+            combined = pd.concat([existing, new_df], ignore_index=True)
+        except Exception:
+            combined = new_df
+    else:
+        combined = new_df
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    combined.to_parquet(ODDS_SNAPSHOTS_PATH, index=False)
+    return len(rows)
+
+
+def get_line_movement(home_team: str, away_team: str, date: str | None = None) -> pd.DataFrame:
+    """
+    Return all timestamped snapshots for a given matchup on a given date,
+    sorted chronologically.
+
+    Parameters
+    ----------
+    home_team : last word of the home team name (e.g. ``'Celtics'``)
+    away_team : last word of the away team name (e.g. ``'Heat'``)
+    date      : ``'YYYY-MM-DD'``. Defaults to today.
+
+    Returns a DataFrame with columns:
+        fetched_at, consensus_spread, consensus_total, best_home_ml, best_away_ml
+    or an empty DataFrame if no snapshots exist for the matchup.
+    """
+    if not ODDS_SNAPSHOTS_PATH.exists():
+        return pd.DataFrame()
+    if date is None:
+        date = datetime.today().strftime("%Y-%m-%d")
+
+    try:
+        df = pd.read_parquet(ODDS_SNAPSHOTS_PATH)
+    except Exception:
+        return pd.DataFrame()
+
+    # Case-insensitive substring match on last word of team name
+    mask = (
+        (df["date"] == date)
+        & df["home_team"].str.contains(home_team, case=False, na=False)
+        & df["away_team"].str.contains(away_team, case=False, na=False)
+    )
+    subset = df[mask].copy()
+    if subset.empty:
+        return pd.DataFrame()
+
+    subset["fetched_at"] = pd.to_datetime(subset["fetched_at"])
+    return (
+        subset[["fetched_at", "consensus_spread", "consensus_total", "best_home_ml", "best_away_ml"]]
+        .sort_values("fetched_at")
+        .reset_index(drop=True)
+    )
 
 
 # ── External Scraped Data (nbastuffer / databallr) ─────────────────────────────

@@ -138,7 +138,42 @@ def refresh_training_datasets(seasons: list, hist_dir: Path):
         time.sleep(0.3)
 
 
-# ── Step 4: Game predictions ──────────────────────────────────────────────────
+# ── Step 4: Injury report ────────────────────────────────────────────────────
+
+def refresh_injury_report():
+    """Fetch ESPN injury data and snapshot to disk."""
+    from utils.data_fetcher import snapshot_injury_report
+
+    log.info("── Injury report ──")
+    n = snapshot_injury_report()
+    if n:
+        log.info(f"  [injury report] {n} rows saved \u2713")
+    else:
+        log.warning("  [injury report] fetch failed or no injuries listed")
+
+
+# ── Step 5: hoopR data ────────────────────────────────────────────────────────
+
+def refresh_hoopr_data():
+    """Download / update hoopR team box and pre-aggregate PBP features for the current season."""
+    import subprocess
+
+    log.info("── hoopR data ──")
+    result = subprocess.run(
+        [sys.executable, "scripts/fetch_hoopr_data.py", "--skip-pbp"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        log.info("  [hoopr] updated \u2713")
+        if result.stdout:
+            for line in result.stdout.strip().splitlines()[-5:]:
+                log.info(f"  {line}")
+    else:
+        log.warning(f"  [hoopr] FAILED: {result.stderr[:300]}")
+
+
+# ── Step 5: Game predictions ──────────────────────────────────────────────────
 
 def refresh_predictions(hist_dir: Path):
     """Pre-run today's prediction pipeline and save to disk."""
@@ -183,6 +218,8 @@ def main():
         refresh_current_season(CURRENT_SEASON, HIST_DIR)
         refresh_standings(CURRENT_SEASON, HIST_DIR)
         refresh_training_datasets(HISTORICAL_SEASONS, HIST_DIR)
+        refresh_injury_report()
+        refresh_hoopr_data()
 
     if not args.no_preds:
         refresh_predictions(HIST_DIR)

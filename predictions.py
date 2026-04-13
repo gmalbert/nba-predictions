@@ -322,12 +322,12 @@ def home_page():
     st.markdown("### Explore")
     nc1, nc2, nc3, nc4, nc5, nc6 = st.columns(6)
     tiles = [
-        ("🏀", "Game Predictions", "Win probabilities, spreads & matchup analysis", "pages/1_Game_Predictions.py"),
+        ("🏀", "Predictions", "Win probabilities, spreads & matchup analysis", "pages/1_Game_Predictions.py"),
         ("🎯", "Pick 6",           "DK Pick 6 player prop builder",                "pages/2_Pick_6.py"),
         ("🏆", "Standings",        "Full conference & division standings",           "pages/3_Standings.py"),
         ("📊", "Team Stats",       "Advanced team metrics & trend charts",          "pages/4_Team_Stats.py"),
         ("👤", "Player Stats",     "Per-player dashboards & rolling averages",      "pages/5_Player_Stats.py"),
-        ("🔬", "Model Performance","Accuracy, calibration & feature importance",    "pages/6_Model_Performance.py"),
+        ("🔬", "Models","Accuracy, calibration & feature importance",    "pages/6_Model_Performance.py"),
     ]
     for col, (icon, title, desc, path) in zip([nc1, nc2, nc3, nc4, nc5, nc6], tiles):
         with col:

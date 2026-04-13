@@ -1,0 +1,138 @@
+name: hoopR Data Refresh
+
+# Downloads sportsdataverse/hoopR-data parquets for all configured seasons
+# and commits them to data_files/hoopr/ so predictions never fetch at runtime.
+#
+# Runs every day during (and slightly around) the NBA season.
+# Also available on-demand via workflow_dispatch.
+
+on:
+  schedule:
+    # 09:00 UTC = 4:00 AM ET — after overnight games are scored, before morning traffic
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+    inputs:
+      all_seasons:
+        description: 'Download all historical seasons (true) or current only (false)'
+        required: false
+        default: 'false'
+      force:
+        description: 'Re-download even if already cached (true/false)'
+        required: false
+        default: 'false'
+
+jobs:
+  hoopr-refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to commit parquet files back to repo
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      # ── Season gate ───────────────────────────────────────────────────────────
+      - name: Check NBA season window
+        id: season_check
+        run: |
+          python3 - <<'EOF'
+          from datetime import datetime
+          import os
+
+          now   = datetime.utcnow()
+          month = now.month
+          day   = now.day
+
+          # Slightly wider window than the regular season so we capture
+          # pre-season downloads (Oct 1) and playoff data (through June 30)
+          in_season = (
+              (month == 10 and day >= 1) or
+              (month in [11, 12, 1, 2, 3]) or
+              (month in [4, 5, 6])
+          )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"active={str(in_season).lower()}\n")
+
+          print(f"Date: {now.date()}  Will run: {in_season}")
+          EOF
+
+      - name: Skip if outside NBA season
+        if: steps.season_check.outputs.active == 'false'
+        run: |
+          echo "Outside NBA season window — skipping hoopR refresh."
+          echo "Use workflow_dispatch to override."
+
+      # ── Python setup ──────────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        if: steps.season_check.outputs.active == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        if: steps.season_check.outputs.active == 'true'
+        run: |
+          pip install --upgrade pip
+          # Install without playwright (not needed for data download scripts)
+          grep -v 'playwright' requirements.txt > /tmp/requirements_hoopr.txt
+          pip install -r /tmp/requirements_hoopr.txt
+
+      # ── Download hoopR team box + player box ──────────────────────────────────
+      - name: Fetch hoopR team & player box data
+        if: steps.season_check.outputs.active == 'true'
+        run: |
+          ALL_FLAG=""
+          FORCE_FLAG=""
+          if [ "${{ github.event.inputs.all_seasons }}" = "true" ]; then
+            ALL_FLAG="--all-seasons"
+          fi
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            FORCE_FLAG="--force"
+          fi
+          # Skip PBP here — PBP is large and aggregated in the weekly Sunday job
+          python scripts/fetch_hoopr_data.py --skip-pbp $ALL_FLAG $FORCE_FLAG
+        continue-on-error: true   # don't block the commit step on a transient GitHub outage
+
+      # ── PBP aggregation (Sundays only, to avoid downloading 600k-row files daily) ─
+      - name: Aggregate PBP features (Sundays only)
+        if: >-
+          steps.season_check.outputs.active == 'true' &&
+          (github.event_name == 'workflow_dispatch' ||
+           format('{0}', github.event.schedule) == '' ||
+           contains(toJSON(github.event), '"sunday"'))
+        run: |
+          # Run on Sundays (day-of-week = 0 in Python = Sunday)
+          python3 - <<'EOF'
+          from datetime import datetime
+          import subprocess, sys
+          if datetime.utcnow().weekday() == 6 or "${{ github.event_name }}" == "workflow_dispatch":
+              result = subprocess.run(
+                  [sys.executable, "scripts/fetch_hoopr_data.py", "--skip-pbp"],
+                  capture_output=False,
+              )
+          else:
+              print("Not Sunday — skipping PBP aggregation.")
+          EOF
+        continue-on-error: true
+
+      # ── Commit ────────────────────────────────────────────────────────────────
+      - name: Commit updated hoopR data
+        if: steps.season_check.outputs.active == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name  "github-actions[bot]"
+          git add data_files/hoopr/
+          if git diff --staged --quiet; then
+            echo "No hoopR data changes to commit."
+          else
+            DATE=$(date -u +%Y-%m-%d)
+            git commit -m "chore: hoopR data refresh ${DATE} [skip ci]"
+            git push
+            echo "hoopR data committed and pushed."
+          fi
