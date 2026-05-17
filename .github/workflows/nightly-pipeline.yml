@@ -45,12 +45,11 @@ jobs:
           day   = now.day
           force = "${{ github.event.inputs.force }}" == "true"
 
-          # Regular season: late October through mid-April
-          # month 10 (Oct 15+) through month 4 (Apr 20)
+          # Regular season: late October through mid-April; playoffs through June
+          # month 10 (Oct 15+) through month 6 (Jun 30)
           in_season = (
               (month == 10 and day >= 15) or
-              (month in [11, 12, 1, 2, 3]) or
-              (month == 4 and day <= 20)
+              (month in [11, 12, 1, 2, 3, 4, 5, 6])
           )
 
           active = in_season or force

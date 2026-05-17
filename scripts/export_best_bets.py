@@ -5,11 +5,13 @@ and writes data_files/best_bets_today.json in the unified Sports Picks Grid sche
 """
 import json
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 SPORT = "NBA"
 MODEL_VERSION = "1.0.0"
-SEASON = str(date.today().year)
+_ET = ZoneInfo("America/New_York")
+SEASON = str(datetime.now(tz=_ET).year)
 OUT_PATH = Path("data_files/best_bets_today.json")
 
 TIER_MAP = {
@@ -47,11 +49,11 @@ def _safe_float(val) -> float | None:
 
 
 def main() -> None:
-    today = date.today()
+    today = datetime.now(tz=_ET).date()
 
-    # NBA season: mid-October through late April
+    # NBA season: mid-October through June (regular season + playoffs)
     month = today.month
-    if not ((month == 10 and today.day >= 15) or month in [11, 12, 1, 2, 3] or (month == 4 and today.day <= 30)):
+    if not ((month == 10 and today.day >= 15) or month in [11, 12, 1, 2, 3, 4, 5, 6]):
         _write([], "NBA off-season")
         return
 
