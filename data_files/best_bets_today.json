@@ -1,39 +1,24 @@
 {
   "meta": {
     "sport": "NBA",
-    "generated_at": "2026-04-30T02:04:39.594685+00:00",
+    "generated_at": "2026-05-18T11:21:45.700033+00:00",
     "model_version": "1.0.0",
     "season": "2026"
   },
   "bets": [
     {
-      "game_date": "2026-04-29",
-      "game_time": "7:30 PM ET",
-      "game": "NYK @ BOS",
-      "home_team": "BOS",
-      "away_team": "NYK",
+      "game_date": "2026-05-18",
+      "game_time": null,
+      "game": "Cleveland Cavaliers @ Detroit Pistons",
+      "home_team": "Detroit Pistons",
+      "away_team": "Cleveland Cavaliers",
       "bet_type": "Moneyline",
-      "pick": "BOS",
-      "confidence": 0.68,
-      "edge": 0.1,
+      "pick": "Detroit Pistons",
+      "confidence": 0.737,
+      "edge": null,
       "tier": "Elite",
-      "odds": -150,
-      "line": null,
-      "notes": null
-    },
-    {
-      "game_date": "2026-04-29",
-      "game_time": "7:00 PM ET",
-      "game": "IND @ MIL",
-      "home_team": "MIL",
-      "away_team": "IND",
-      "bet_type": "Moneyline",
-      "pick": "MIL",
-      "confidence": 0.55,
-      "edge": 0.04,
-      "tier": "Strong",
-      "odds": -120,
-      "line": null,
+      "odds": null,
+      "line": 13.4,
       "notes": null
     }
   ]
