@@ -1,13 +1,13 @@
 {
   "meta": {
     "sport": "NBA",
-    "generated_at": "2026-05-30T10:34:24.093812+00:00",
+    "generated_at": "2026-05-31T10:41:39.292238+00:00",
     "model_version": "1.0.0",
     "season": "2026"
   },
   "bets": [
     {
-      "game_date": "2026-05-30",
+      "game_date": "2026-05-31",
       "game_time": null,
       "game": "San Antonio Spurs @ Oklahoma City Thunder",
       "home_team": "Oklahoma City Thunder",
