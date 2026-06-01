@@ -1,25 +1,10 @@
 {
   "meta": {
     "sport": "NBA",
-    "generated_at": "2026-05-31T10:41:39.292238+00:00",
+    "generated_at": "2026-06-01T12:01:09.523378+00:00",
     "model_version": "1.0.0",
-    "season": "2026"
+    "season": "2026",
+    "notes": "No predictions parquet found for 2026-06-01"
   },
-  "bets": [
-    {
-      "game_date": "2026-05-31",
-      "game_time": null,
-      "game": "San Antonio Spurs @ Oklahoma City Thunder",
-      "home_team": "Oklahoma City Thunder",
-      "away_team": "San Antonio Spurs",
-      "bet_type": "Moneyline",
-      "pick": "Oklahoma City Thunder",
-      "confidence": 0.692,
-      "edge": null,
-      "tier": "Elite",
-      "odds": null,
-      "line": 10.5,
-      "notes": null
-    }
-  ]
+  "bets": []
 }
