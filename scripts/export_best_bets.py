@@ -83,7 +83,10 @@ def main() -> None:
             break
 
     if df is None or df.empty:
-        _write([], f"No predictions parquet found for {today}")
+        # No predictions parquet today (off-day or pipeline failure).
+        # Don't overwrite the existing file — leave the last valid picks on GitHub
+        # so the Sports Picks Grid continues to show recent bets (60-day window).
+        print(f"[NBA] No predictions parquet found for {today} — preserving existing file")
         return
 
     # Filter to today
@@ -92,7 +95,8 @@ def main() -> None:
         df = df[df["game_date"] == today]
 
     if df.empty:
-        _write([], f"No NBA games for {today}")
+        # Parquet exists but no games scheduled today — same: don't overwrite.
+        print(f"[NBA] No NBA games for {today} — preserving existing file")
         return
 
     bets = []
