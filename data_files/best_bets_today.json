@@ -1,10 +1,10 @@
 {
   "meta": {
     "sport": "NBA",
-    "generated_at": "2026-06-01T12:01:09.523378+00:00",
+    "generated_at": "2026-06-02T11:32:20.381261+00:00",
     "model_version": "1.0.0",
     "season": "2026",
-    "notes": "No predictions parquet found for 2026-06-01"
+    "notes": "No predictions parquet found for 2026-06-02"
   },
   "bets": []
 }
