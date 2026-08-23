@@ -1,7 +1,7 @@
 name: NBA Odds Snapshot
 
-# Takes a snapshot of live odds every 30 minutes during game hours so the
-# Line Movement section of page 1 has multiple data points per day.
+# Takes a snapshot of live odds every 30 minutes during game hours in NBA-season
+# months so the Line Movement section of page 1 has multiple data points per day.
 #
 # Game hours window: 2 PM ET – 1 AM ET.
 # UTC offsets: ET = UTC-5 (EST) / UTC-4 (EDT, Mar–Nov).
@@ -10,9 +10,16 @@ name: NBA Odds Snapshot
 
 on:
   schedule:
-    - cron: '*/30 18-23 * * *'   # 2 PM – 7 PM ET
-    - cron: '*/30 0-5 * * *'     # 7 PM – 1 AM ET
-  workflow_dispatch:              # manual trigger
+    # Limit the scheduler itself to October–April. The season gate below still
+    # handles the October 1–14 and April 21–30 boundary periods.
+    - cron: '*/30 18-23 * 1-4,10-12 *'   # 2 PM – 7 PM ET
+    - cron: '*/30 0-5 * 1-4,10-12 *'     # 7 PM – 1 AM ET
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Run outside the NBA season window (true/false)'
+        required: false
+        default: 'false'
 
 jobs:
   snapshot-odds:
@@ -39,7 +46,7 @@ jobs:
           now   = datetime.utcnow()
           month = now.month
           day   = now.day
-          force = "${{ github.event_name }}" == "workflow_dispatch"
+          force = "${{ github.event.inputs.force }}" == "true"
 
           in_season = (
               (month == 10 and day >= 15) or

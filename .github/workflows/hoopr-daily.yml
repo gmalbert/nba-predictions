@@ -8,8 +8,10 @@ name: hoopR Data Refresh
 
 on:
   schedule:
-    # 09:00 UTC = 4:00 AM ET — after overnight games are scored, before morning traffic
-    - cron: '0 9 * * *'
+    # 09:00 UTC = 4:00 AM ET — after overnight games are scored, before morning traffic.
+    # Scheduler limited to NBA season months (Oct–Jun, incl. playoffs). The season
+    # gate below still handles the boundary days.
+    - cron: '0 9 * 10-12,1-6 *'
   workflow_dispatch:
     inputs:
       all_seasons:

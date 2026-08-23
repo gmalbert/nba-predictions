@@ -7,8 +7,10 @@ name: Refresh Referee Assignments
 
 on:
   schedule:
-    # 16:00 UTC = 11:00 AM ET (12:00 PM EDT when DST is active)
-    - cron: '0 16 * * *'
+    # 16:00 UTC = 11:00 AM ET (12:00 PM EDT when DST is active).
+    # Scheduler limited to NBA season months (Oct–Jun, incl. playoffs). The season
+    # gate below still handles the boundary days.
+    - cron: '0 16 * 10-12,1-6 *'
   workflow_dispatch:
     inputs:
       force:
