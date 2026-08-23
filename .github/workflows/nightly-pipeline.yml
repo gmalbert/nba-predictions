@@ -5,8 +5,10 @@ name: NBA Nightly Data Pipeline
 
 on:
   schedule:
-    # 10:00 UTC = 5:00 AM ET — before most markets open, after overnight odds settle
-    - cron: '0 10 * * *'
+    # 10:00 UTC = 5:00 AM ET — before most markets open, after overnight odds settle.
+    # Scheduler limited to NBA season months (Oct–Jun, incl. playoffs). The season
+    # gate below still handles the boundary days.
+    - cron: '0 10 * 10-12,1-6 *'
   workflow_dispatch:
     inputs:
       date:
