@@ -15,6 +15,7 @@ import logging
 import sys
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 # Ensure repo root is on the path
@@ -29,7 +30,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-TODAY = datetime.today().strftime("%Y-%m-%d")
+TODAY = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -49,18 +50,7 @@ def _run(label: str, fn, *args, **kwargs):
 # ── Step 1: Refresh current-season NBA API parquets ───────────────────────────
 
 def refresh_current_season(season: str, hist_dir: Path):
-    """Delete stale current-season parquets then re-fetch fresh from NBA API."""
-    slug = season.replace("-", "_")
-    stale_files = [
-        hist_dir / f"league_gamelog_{slug}_Regular_Season.parquet",
-        hist_dir / f"league_teamstats_{slug}_Regular_Season.parquet",
-        hist_dir / f"league_playerstats_{slug}_Regular_Season.parquet",
-        hist_dir / f"team_est_metrics_{slug}.parquet",
-    ]
-    for p in stale_files:
-        if p.exists():
-            p.unlink()
-            log.info(f"  [stale] removed {p.name}")
+    """Refresh current-season data without deleting the last usable caches."""
 
     from utils.data_fetcher import (
         get_league_game_log,
@@ -70,13 +60,13 @@ def refresh_current_season(season: str, hist_dir: Path):
     )
 
     log.info("── Current-season NBA API data ──")
-    _run("game log",          get_league_game_log,          season, "Regular Season")
+    _run("game log",          get_league_game_log,          season, "Regular Season", force=True)
     time.sleep(0.6)
-    _run("team stats",        get_league_team_stats,        season)
+    _run("team stats",        get_league_team_stats,        season, force=True)
     time.sleep(0.6)
-    _run("player stats",      get_league_player_stats,      season)
+    _run("player stats",      get_league_player_stats,      season, force=True)
     time.sleep(0.6)
-    _run("estimated metrics", get_team_estimated_metrics,   season)
+    _run("estimated metrics", get_team_estimated_metrics,   season, force=True)
     time.sleep(0.6)
 
 
@@ -185,7 +175,9 @@ def refresh_predictions(hist_dir: Path):
         return
 
     log.info("── Game predictions ──")
-    df = _run("predictions", run_and_cache_predictions, TODAY)
+    # Prediction failures must fail the job; only a successful empty result is
+    # a no-games day. The workflow still publishes the feed health afterward.
+    df = run_and_cache_predictions(TODAY)
     if not df.empty:
         log.info(f"  [predictions] {len(df)} games pre-cached ✓")
     else:

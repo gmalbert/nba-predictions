@@ -50,7 +50,14 @@ HISTORICAL_SEASONS = [
     "2017-18", "2018-19", "2019-20", "2020-21",
     "2021-22", "2022-23", "2023-24", "2024-25", "2025-26",
 ]
-CURRENT_SEASON = "2025-26"
+def current_season(at: datetime | None = None) -> str:
+    """NBA seasons roll over in October, using the schedule's Eastern date."""
+    at = at or _today_et()
+    start = at.year if at.month >= 10 else at.year - 1
+    return f"{start}-{str(start + 1)[-2:]}"
+
+
+CURRENT_SEASON = current_season()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -60,24 +67,37 @@ def _sleep():
     time.sleep(RATE_LIMIT_DELAY)
 
 
-def _read_or_fetch(path: Path, fetch_fn) -> pd.DataFrame:
+def _read_or_fetch(path: Path, fetch_fn, *, force: bool = False) -> pd.DataFrame:
     """Return cached parquet if it exists; otherwise call fetch_fn, persist, and return."""
-    if path.exists():
+    if path.exists() and not force:
         try:
             return pd.read_parquet(path)
         except Exception:
             pass  # Re-fetch if cached file is corrupt
-    df = fetch_fn()
+    try:
+        df = fetch_fn()
+    except Exception:
+        if path.exists():
+            cached = pd.read_parquet(path)
+            if not cached.empty:
+                print(f"[NBA] Refresh failed; retaining {path.name}")
+                return cached
+        raise
     if df is not None and not df.empty:
         path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(path, index=False)
-    return df if df is not None else pd.DataFrame()
+        temporary = path.with_suffix(".parquet.tmp")
+        df.to_parquet(temporary, index=False)
+        temporary.replace(path)
+        return df
+    if path.exists():
+        return pd.read_parquet(path)
+    return pd.DataFrame()
 
 
 # ── Scoreboard ─────────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=300)
-def get_today_scoreboard(game_date: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+def get_today_scoreboard(game_date: str | None = None, *, strict: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Fetch scoreboard for today or a given date (MM/DD/YYYY).
     Returns (game_header_df, line_score_df).  Cached for 5 minutes.
@@ -131,12 +151,14 @@ def get_today_scoreboard(game_date: str | None = None) -> tuple[pd.DataFrame, pd
 
         return pd.DataFrame(rows), pd.DataFrame()
     except Exception:
+        if strict:
+            raise
         return pd.DataFrame(), pd.DataFrame()
 
 
 # ── League Game Logs ───────────────────────────────────────────────────────────
 
-def get_league_game_log(season: str, season_type: str = "Regular Season") -> pd.DataFrame:
+def get_league_game_log(season: str, season_type: str = "Regular Season", *, force: bool = False) -> pd.DataFrame:
     """
     All team-level game rows for a full season.  Cached to disk (parquet).
     Uses the LeagueGameLog endpoint (player_or_team='T').
@@ -153,7 +175,7 @@ def get_league_game_log(season: str, season_type: str = "Regular Season") -> pd.
         )
         return raw.get_data_frames()[0]
 
-    return _read_or_fetch(path, fetch)
+    return _read_or_fetch(path, fetch, force=force)
 
 
 @st.cache_data(ttl=3600)
@@ -259,7 +281,7 @@ def get_box_score_advanced(game_id: str) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 # ── League-Wide Stats ──────────────────────────────────────────────────────────
 
-def get_league_team_stats(season: str, season_type: str = "Regular Season") -> pd.DataFrame:
+def get_league_team_stats(season: str, season_type: str = "Regular Season", *, force: bool = False) -> pd.DataFrame:
     """Per-game team stats for all 30 teams. Cached to disk."""
     tag = season_type.replace(" ", "_")
     path = HIST_DIR / f"league_teamstats_{season.replace('-', '_')}_{tag}.parquet"
@@ -273,7 +295,7 @@ def get_league_team_stats(season: str, season_type: str = "Regular Season") -> p
         )
         return raw.get_data_frames()[0]
 
-    return _read_or_fetch(path, fetch)
+    return _read_or_fetch(path, fetch, force=force)
 
 
 @st.cache_data(ttl=3600)
@@ -281,7 +303,7 @@ def get_league_team_stats_cached(season: str) -> pd.DataFrame:
     return get_league_team_stats(season)
 
 
-def get_league_player_stats(season: str, season_type: str = "Regular Season") -> pd.DataFrame:
+def get_league_player_stats(season: str, season_type: str = "Regular Season", *, force: bool = False) -> pd.DataFrame:
     """Per-game player stats league-wide. Cached to disk."""
     tag = season_type.replace(" ", "_")
     path = HIST_DIR / f"league_playerstats_{season.replace('-', '_')}_{tag}.parquet"
@@ -295,7 +317,7 @@ def get_league_player_stats(season: str, season_type: str = "Regular Season") ->
         )
         return raw.get_data_frames()[0]
 
-    return _read_or_fetch(path, fetch)
+    return _read_or_fetch(path, fetch, force=force)
 
 
 @st.cache_data(ttl=3600)
@@ -303,7 +325,7 @@ def get_league_player_stats_cached(season: str) -> pd.DataFrame:
     return get_league_player_stats(season)
 
 
-def get_team_estimated_metrics(season: str) -> pd.DataFrame:
+def get_team_estimated_metrics(season: str, *, force: bool = False) -> pd.DataFrame:
     """
     Advanced estimated team metrics: ORtg, DRtg, pace, net rating.
     Cached to disk.
@@ -315,7 +337,7 @@ def get_team_estimated_metrics(season: str) -> pd.DataFrame:
         raw = teamestimatedmetrics.TeamEstimatedMetrics(season=season)
         return raw.get_data_frames()[0]
 
-    return _read_or_fetch(path, fetch)
+    return _read_or_fetch(path, fetch, force=force)
 
 
 @st.cache_data(ttl=3600)
@@ -964,9 +986,9 @@ def run_and_cache_predictions(date_str: str | None = None) -> pd.DataFrame:
     # Import here to avoid circular import (prediction_engine imports data_fetcher)
     from utils.prediction_engine import predict_today_games  # noqa: PLC0415
     df = predict_today_games(game_date=mm_dd_yyyy)
-    if not df.empty:
-        df.to_parquet(path, index=False)
-    return df if not df.empty else pd.DataFrame()
+    # Empty is a valid no-games result; failures propagate without creating an artifact.
+    df.to_parquet(path, index=False)
+    return df
 
 
 @st.cache_data(ttl=3600)
