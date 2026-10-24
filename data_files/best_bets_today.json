@@ -1,25 +1,12 @@
 {
   "meta": {
     "sport": "NBA",
-    "generated_at": "2026-06-09T11:05:56.210049+00:00",
+    "generated_at": "2026-10-24T14:36:58.573031+00:00",
     "model_version": "1.0.0",
-    "season": "2026"
+    "season": "2026-27",
+    "status": "pipeline_pending",
+    "tier_definition": "edge-v1",
+    "notes": "No predictions artifact for 2026-10-24; upstream pipeline has not produced current data"
   },
-  "bets": [
-    {
-      "game_date": "2026-06-09",
-      "game_time": null,
-      "game": "San Antonio Spurs @ New York Knicks",
-      "home_team": "New York Knicks",
-      "away_team": "San Antonio Spurs",
-      "bet_type": "Moneyline",
-      "pick": "New York Knicks",
-      "confidence": 0.559,
-      "edge": null,
-      "tier": "Good",
-      "odds": null,
-      "line": 3.1,
-      "notes": null
-    }
-  ]
+  "bets": []
 }
