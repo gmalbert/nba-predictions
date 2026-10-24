@@ -93,10 +93,16 @@ def predict_today_games(
         elo_path = MODEL_DIR / "elo_system.pkl"
         elo = EloSystem.load(elo_path) if elo_path.exists() else None
 
+    # Check the schedule first so a genuine off-day can publish an empty
+    # artifact, while provider failures remain distinguishable from no games.
+    games_header, _ = get_today_scoreboard(game_date, strict=True)
+    if games_header.empty:
+        return pd.DataFrame()
+
     # Build team features from current season log
     game_log = get_league_game_log_cached(CURRENT_SEASON)
     if game_log.empty:
-        return pd.DataFrame()
+        raise RuntimeError(f"No game log available for current NBA season {CURRENT_SEASON}")
 
     game_log["GAME_DATE"] = pd.to_datetime(game_log["GAME_DATE"])
 
@@ -124,11 +130,6 @@ def predict_today_games(
     team_feat: dict[int, pd.DataFrame] = {}
     for tid, grp in game_log.groupby("TEAM_ID"):
         team_feat[int(tid)] = engineer_team_features(grp.sort_values("GAME_DATE"))
-
-    # Get today's games
-    games_header, _ = get_today_scoreboard(game_date)
-    if games_header.empty:
-        return pd.DataFrame()
 
     # Market implied probabilities
     market_map: dict[str, float] = {}

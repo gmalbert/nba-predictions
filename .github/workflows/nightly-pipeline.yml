@@ -40,9 +40,10 @@ jobs:
         run: |
           python3 - <<'EOF'
           from datetime import datetime
+          from zoneinfo import ZoneInfo
           import os
 
-          now   = datetime.utcnow()
+          now   = datetime.now(ZoneInfo("America/New_York"))
           month = now.month
           day   = now.day
           force = "${{ github.event.inputs.force }}" == "true"
@@ -57,6 +58,8 @@ jobs:
           active = in_season or force
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"active={str(active).lower()}\n")
+              start_year = now.year if now.month >= 10 else now.year - 1
+              f.write(f"season={start_year}-{str(start_year + 1)[-2:]}\n")
 
           print(f"Date: {now.date()}  month={month} day={day}")
           print(f"In NBA season: {in_season}  Force: {force}  Will run: {active}")
@@ -102,7 +105,7 @@ jobs:
       - name: Scrape nbastuffer team & player stats
         if: steps.season_check.outputs.active == 'true'
         run: |
-          python scripts/scrape_external.py --source nbastuffer --season 2025-26
+          python scripts/scrape_external.py --source nbastuffer --season "${{ steps.season_check.outputs.season }}"
         continue-on-error: true
 
       # ── Scrape referee assignments ────────────────────────────────────────────
@@ -113,10 +116,11 @@ jobs:
         continue-on-error: true
 
       # ── Refresh current-season nba_api parquets + pre-run predictions ─────────
-      # Deletes stale current-season parquets and re-fetches from NBA API,
+      # Refreshes current-season parquets while retaining valid cached data,
       # then runs the ML prediction pipeline for today's games so page 1
       # loads instantly from disk rather than re-running models on every visit.
       - name: Preload page caches
+        id: preload
         if: steps.season_check.outputs.active == 'true'
         run: |
           python scripts/preload_cache.py
@@ -140,6 +144,7 @@ jobs:
           fi
 
       - name: Export best bets for Sports Picks Grid
+        id: export
         if: steps.season_check.outputs.active == 'true'
         run: python scripts/export_best_bets.py
         continue-on-error: true
@@ -152,4 +157,8 @@ jobs:
           git add data_files/best_bets_today.json
           git diff --staged --quiet || git commit -m "chore: update best_bets_today [skip ci]"
           git push
-        continue-on-error: true
+      - name: Require successful prediction and feed generation
+        if: steps.season_check.outputs.active == 'true' && (steps.preload.outcome == 'failure' || steps.export.outcome == 'failure')
+        run: |
+          echo "NBA predictions or grid export failed. Source health was published; inspect the preload/export logs."
+          exit 1
