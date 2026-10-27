@@ -1,12 +1,12 @@
 {
   "meta": {
     "sport": "NBA",
-    "generated_at": "2026-10-26T16:25:30.582784+00:00",
+    "generated_at": "2026-10-27T15:40:27.919527+00:00",
     "model_version": "1.0.0",
     "season": "2026-27",
     "status": "pipeline_pending",
     "tier_definition": "edge-v1",
-    "notes": "No predictions artifact for 2026-10-26; upstream pipeline has not produced current data"
+    "notes": "No predictions artifact for 2026-10-27; upstream pipeline has not produced current data"
   },
   "bets": []
 }
