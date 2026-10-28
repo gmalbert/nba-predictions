@@ -551,7 +551,9 @@ def scrape_today_referee_assignments(force_refresh: bool = False) -> pd.DataFram
 
     Saved to data_files/historical/nba_ref_assignments_today.parquet.
     """
-    today_str = pd.Timestamp.now().strftime("%Y-%m-%d")
+    from utils.data_fetcher import _today_et
+    today = _today_et()
+    today_str = today.strftime("%Y-%m-%d")
 
     # Return cached version if it exists from today and force_refresh is False
     if _REF_PARQUET.exists() and not force_refresh:
@@ -573,8 +575,7 @@ def scrape_today_referee_assignments(force_refresh: bool = False) -> pd.DataFram
     # Build a list of today's games with tricode + display name for matching.
     nba_games: list[dict] = []
     try:
-        from utils.data_fetcher import _today_et
-        nba_games = _referee_nba_games(_today_et().strftime("%m/%d/%Y"))
+        nba_games = _referee_nba_games(today.strftime("%m/%d/%Y"))
         log.info(f"  [scoreboard] {len(nba_games)} games with NBA IDs today")
     except Exception as exc:
         log.warning(f"  [nba_api] could not resolve NBA game IDs: {exc}")
