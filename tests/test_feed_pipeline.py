@@ -46,13 +46,13 @@ class FeedPipelineTests(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 data_fetcher.get_today_scoreboard("10/24/2026", strict=True)
 
-    def test_live_scoreboard_fallback_preserves_nba_game_and_team_ids(self):
-        team = lambda ident, city, name, code: {"teamId": ident, "teamCity": city, "teamName": name, "teamTricode": code}
-        payload = {"scoreboard": {"gameDate": "2026-10-28", "games": [{
-            "gameId": "0022600001", "gameStatus": 1, "gameStatusText": "7:00 pm ET",
-            "homeTeam": team(1610612738, "Boston", "Celtics", "BOS"),
-            "awayTeam": team(1610612747, "Los Angeles", "Lakers", "LAL"),
-        }]}}
+    def test_espn_scoreboard_fallback_maps_teams_and_labels_game_id(self):
+        payload = {"events": [{"id": "401909881", "date": "2026-10-28T23:00Z",
+            "status": {"type": {"state": "pre", "detail": "7:00 pm ET"}},
+            "competitions": [{"competitors": [
+                {"homeAway": "home", "team": {"abbreviation": "BOS"}},
+                {"homeAway": "away", "team": {"abbreviation": "WSH"}},
+            ]}]}]}
         response = Mock()
         response.json.return_value = payload
         with patch.object(data_fetcher, "_today_et", return_value=datetime(2026, 10, 28)), \
@@ -61,22 +61,22 @@ class FeedPipelineTests(unittest.TestCase):
              patch.object(data_fetcher.requests, "get", return_value=response):
             data_fetcher.get_today_scoreboard.clear()
             games, _ = data_fetcher.get_today_scoreboard("10/28/2026", strict=True)
-        self.assertEqual(games.iloc[0]["GAME_ID"], "0022600001")
+        self.assertEqual(games.iloc[0]["GAME_ID"], "espn:401909881")
         self.assertEqual(games.iloc[0]["HOME_TEAM_ID"], 1610612738)
-        self.assertEqual(games.iloc[0]["VISITOR_TEAM_ABBREVIATION"], "LAL")
+        self.assertEqual(games.iloc[0]["VISITOR_TEAM_ABBREVIATION"], "WAS")
 
-    def test_live_scoreboard_rejects_stale_data(self):
+    def test_espn_scoreboard_rejects_stale_data(self):
         response = Mock()
-        response.json.return_value = {"scoreboard": {"gameDate": "2026-10-27", "games": []}}
+        response.json.return_value = {"events": [{"date": "2026-10-27T23:00Z"}]}
         with patch.object(data_fetcher.requests, "get", return_value=response):
             with self.assertRaises(ValueError):
-                data_fetcher._live_scoreboard("10/28/2026")
+                data_fetcher._espn_scoreboard("10/28/2026")
 
     def test_today_scoreboard_propagates_fallback_failure(self):
         with patch.object(data_fetcher, "_today_et", return_value=datetime(2026, 10, 28)), \
              patch.object(data_fetcher, "_sleep"), \
              patch.object(data_fetcher.scoreboardv3, "ScoreboardV3", side_effect=TimeoutError()), \
-             patch.object(data_fetcher, "_live_scoreboard", side_effect=ValueError("stale")):
+             patch.object(data_fetcher, "_espn_scoreboard", side_effect=ValueError("stale")):
             data_fetcher.get_today_scoreboard.clear()
             with self.assertRaisesRegex(ValueError, "stale"):
                 data_fetcher.get_today_scoreboard("10/28/2026", strict=True)
