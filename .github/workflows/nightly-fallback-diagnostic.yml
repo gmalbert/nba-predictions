@@ -24,6 +24,14 @@ jobs:
           grep -v playwright requirements.txt > /tmp/requirements_nightly.txt
           pip install -r /tmp/requirements_nightly.txt
       - name: Generate today's predictions
-        run: python scripts/preload_cache.py --preds-only
+        run: |
+          python - <<'PY'
+          from datetime import datetime
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+          today = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+          Path(f"data_files/historical/predictions_{today}.parquet").unlink(missing_ok=True)
+          PY
+          python scripts/preload_cache.py --preds-only
       - name: Export today's picks
         run: python scripts/export_best_bets.py
