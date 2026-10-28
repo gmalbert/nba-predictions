@@ -24,4 +24,6 @@ jobs:
           python-version: '3.11'
       - run: pip install pandas pyarrow numpy requests streamlit nba_api
       - run: python -m unittest discover -s tests -v
+      - name: Verify live NBA scoreboard on runner
+        run: python -c "from utils.data_fetcher import _live_scoreboard, _today_et; games, _ = _live_scoreboard(_today_et().strftime('%m/%d/%Y')); print(f'NBA live scoreboard: {len(games)} games')"
       - run: python -m compileall -q scripts/export_best_bets.py scripts/preload_cache.py utils/data_fetcher.py utils/prediction_engine.py

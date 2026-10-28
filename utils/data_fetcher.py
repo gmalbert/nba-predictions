@@ -96,6 +96,37 @@ def _read_or_fetch(path: Path, fetch_fn, *, force: bool = False) -> pd.DataFrame
 
 # ── Scoreboard ─────────────────────────────────────────────────────────────────
 
+def _live_scoreboard(game_date: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Fetch today's NBA CDN scoreboard, rejecting stale or malformed data."""
+    response = requests.get(
+        "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json",
+        timeout=15,
+        headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.nba.com/"},
+    )
+    response.raise_for_status()
+    scoreboard = response.json()["scoreboard"]
+    expected_date = datetime.strptime(game_date, "%m/%d/%Y").date()
+    if datetime.strptime(scoreboard["gameDate"], "%Y-%m-%d").date() != expected_date:
+        raise ValueError("NBA live scoreboard date does not match requested date")
+    games = scoreboard["games"]
+    if not isinstance(games, list):
+        raise ValueError("NBA live scoreboard games must be a list")
+    rows = []
+    for game in games:
+        home, away = game["homeTeam"], game["awayTeam"]
+        rows.append({
+            "GAME_ID": game["gameId"],
+            "HOME_TEAM_ID": home["teamId"],
+            "VISITOR_TEAM_ID": away["teamId"],
+            "HOME_TEAM_ABBREVIATION": home["teamTricode"],
+            "VISITOR_TEAM_ABBREVIATION": away["teamTricode"],
+            "HOME_TEAM_NAME": f"{home['teamCity']} {home['teamName']}",
+            "VISITOR_TEAM_NAME": f"{away['teamCity']} {away['teamName']}",
+            "GAME_STATUS_TEXT": game["gameStatusText"],
+            "GAME_STATUS_ID": game["gameStatus"],
+        })
+    return pd.DataFrame(rows), pd.DataFrame()
+
 @st.cache_data(ttl=300)
 def get_today_scoreboard(game_date: str | None = None, *, strict: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -151,7 +182,15 @@ def get_today_scoreboard(game_date: str | None = None, *, strict: bool = False) 
 
         return pd.DataFrame(rows), pd.DataFrame()
     except Exception:
-        if strict:
+        # The live feed only covers the current Eastern date. Never interpret a
+        # stale feed or provider failure as an authoritative empty schedule.
+        if game_date == _today_et().strftime("%m/%d/%Y"):
+            try:
+                return _live_scoreboard(game_date)
+            except Exception:
+                if strict:
+                    raise
+        elif strict:
             raise
         return pd.DataFrame(), pd.DataFrame()
 
