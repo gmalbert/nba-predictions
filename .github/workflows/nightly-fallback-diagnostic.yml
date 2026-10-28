@@ -5,6 +5,7 @@ on:
       - 'utils/data_fetcher.py'
       - 'utils/espn_game_log.py'
       - 'utils/prediction_engine.py'
+      - 'requirements.txt'
       - '.github/workflows/nightly-fallback-diagnostic.yml'
   workflow_dispatch:
 permissions:
