@@ -1,0 +1,37 @@
+name: Temporary NBA network diagnostic
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/temporary-nba-network-diagnostic.yml'
+permissions:
+  contents: read
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install nba_api==1.12.0
+      - name: Compare NBA endpoints
+        run: |
+          python - <<'PY'
+          import time, requests
+          from nba_api.stats.endpoints import scoreboardv3
+          url = 'https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json'
+          for label, agent in [('generic', 'Mozilla/5.0'), ('firefox', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0) Gecko/20100101 Firefox/158.0')]:
+              start = time.monotonic()
+              try:
+                  response = requests.get(url, headers={'User-Agent': agent, 'Referer': 'https://www.nba.com/'}, timeout=15)
+                  print(f'CDN {label}: HTTP {response.status_code}, {time.monotonic()-start:.1f}s')
+                  if response.ok:
+                      print(f'CDN {label}: date={response.json()["scoreboard"]["gameDate"]}, games={len(response.json()["scoreboard"]["games"])}')
+              except requests.RequestException as exc:
+                  print(f'CDN {label}: {type(exc).__name__}, {time.monotonic()-start:.1f}s')
+          start = time.monotonic()
+          try:
+              result = scoreboardv3.ScoreboardV3(game_date='10/28/2026', league_id='00', timeout=20)
+              print(f'STATS nba_api: OK, games={len(result.data_sets[1].get_data_frame())}, {time.monotonic()-start:.1f}s')
+          except Exception as exc:
+              print(f'STATS nba_api: {type(exc).__name__}, {time.monotonic()-start:.1f}s')
+          PY
