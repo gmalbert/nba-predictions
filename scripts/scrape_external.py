@@ -35,6 +35,7 @@ Column fallbacks
 import argparse
 import logging
 import re
+import sys
 import time
 from pathlib import Path
 
@@ -52,6 +53,7 @@ log = logging.getLogger(__name__)
 # ── Directories ────────────────────────────────────────────────────────────────
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 RAW_HTML_DIR = ROOT / "data_files" / "raw_html"
 HIST_DIR = ROOT / "data_files" / "historical"
 RAW_HTML_DIR.mkdir(parents=True, exist_ok=True)
@@ -509,13 +511,33 @@ _ESPN_SUMMARY    = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba
 _REF_PARQUET     = HIST_DIR / "nba_ref_assignments_today.parquet"
 
 
+def _referee_nba_games(game_date: str) -> list[dict]:
+    """Resolve games with NBA IDs; ESPN-only IDs cannot identify NBA refs."""
+    from utils.data_fetcher import get_today_scoreboard
+
+    games, _ = get_today_scoreboard(game_date, strict=True)
+    result = []
+    for _, game in games.iterrows():
+        game_id = str(game["GAME_ID"])
+        if len(game_id) != 10 or not game_id.isdigit():
+            continue
+        result.append({
+            "nba_game_id": game_id,
+            "home_tri": game["HOME_TEAM_ABBREVIATION"],
+            "away_tri": game["VISITOR_TEAM_ABBREVIATION"],
+            "home_display": game["HOME_TEAM_NAME"].lower(),
+            "away_display": game["VISITOR_TEAM_NAME"].lower(),
+        })
+    return result
+
+
 def scrape_today_referee_assignments(force_refresh: bool = False) -> pd.DataFrame:
     """
     Fetch today's referee assignments from official.nba.com (primary source).
 
     No playwright required — pure HTTP/JSON.
     official.nba.com is used as the single source of truth for referee names
-    and game assignments. NBA game IDs are resolved via nba_api ScoreboardV3.
+    and game assignments. NBA game IDs come from the shared scoreboard.
     Each referee is cross-referenced against the cached nbastuffer season-
     aggregate file for foul-tendency stats.
 
@@ -529,7 +551,9 @@ def scrape_today_referee_assignments(force_refresh: bool = False) -> pd.DataFram
 
     Saved to data_files/historical/nba_ref_assignments_today.parquet.
     """
-    today_str = pd.Timestamp.now().strftime("%Y-%m-%d")
+    from utils.data_fetcher import _today_et
+    today = _today_et()
+    today_str = today.strftime("%Y-%m-%d")
 
     # Return cached version if it exists from today and force_refresh is False
     if _REF_PARQUET.exists() and not force_refresh:
@@ -538,6 +562,7 @@ def scrape_today_referee_assignments(force_refresh: bool = False) -> pd.DataFram
             "FETCH_DATE" in cached.columns
             and "NBA_GAME_ID" in cached.columns  # reject old schema
             and not cached.empty
+            and cached["NBA_GAME_ID"].fillna("").astype(str).str.fullmatch(r"\d{10}").any()
             and str(cached["FETCH_DATE"].iloc[0])[:10] == today_str
         ):
             log.info(f"  [cache] {_REF_PARQUET.name} (today, {len(cached)} rows)")
@@ -546,37 +571,12 @@ def scrape_today_referee_assignments(force_refresh: bool = False) -> pd.DataFram
     sess = requests.Session()
     sess.headers.update(_HTTP_HEADERS)
 
-    # ── 1. Resolve today's NBA game IDs via nba_api ScoreboardV3 ─────────────
+    # ── 1. Resolve today's NBA game IDs via the shared scoreboard ─────────────
     # Build a list of today's games with tricode + display name for matching.
     nba_games: list[dict] = []
     try:
-        from nba_api.stats.endpoints import scoreboardv3 as _sb3
-        import time as _time
-        _time.sleep(0.6)
-        _sb = _sb3.ScoreboardV3(
-            game_date=pd.Timestamp.now().strftime("%m/%d/%Y"),
-            league_id="00",
-        )
-        _games_df = _sb.data_sets[1].get_data_frame()
-        _teams_df = _sb.data_sets[2].get_data_frame()
-        _tricode_to_display = {
-            r["teamTricode"]: f"{r['teamCity']} {r['teamName']}".lower()
-            for _, r in _teams_df.iterrows()
-        }
-        for _, _g in _games_df.iterrows():
-            _code = _g.get("gameCode", "")
-            _parts = _code.split("/")
-            if len(_parts) == 2 and len(_parts[1]) == 6:
-                _away_tri = _parts[1][:3]
-                _home_tri = _parts[1][3:]
-                nba_games.append({
-                    "nba_game_id":   _g["gameId"],
-                    "home_tri":      _home_tri,
-                    "away_tri":      _away_tri,
-                    "home_display":  _tricode_to_display.get(_home_tri, "").lower(),
-                    "away_display":  _tricode_to_display.get(_away_tri, "").lower(),
-                })
-        log.info(f"  [nba_api] {len(nba_games)} games today")
+        nba_games = _referee_nba_games(today.strftime("%m/%d/%Y"))
+        log.info(f"  [scoreboard] {len(nba_games)} games with NBA IDs today")
     except Exception as exc:
         log.warning(f"  [nba_api] could not resolve NBA game IDs: {exc}")
 
