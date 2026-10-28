@@ -1,0 +1,29 @@
+name: Nightly fallback diagnostic
+on:
+  pull_request:
+    paths:
+      - 'utils/data_fetcher.py'
+      - 'utils/espn_game_log.py'
+      - 'utils/prediction_engine.py'
+      - 'requirements.txt'
+      - '.github/workflows/nightly-fallback-diagnostic.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  predictions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install pipeline dependencies
+        run: |
+          grep -v playwright requirements.txt > /tmp/requirements_nightly.txt
+          pip install -r /tmp/requirements_nightly.txt
+      - name: Generate today's predictions
+        run: python scripts/preload_cache.py --preds-only
+      - name: Export today's picks
+        run: python scripts/export_best_bets.py

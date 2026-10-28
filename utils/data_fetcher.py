@@ -96,6 +96,47 @@ def _read_or_fetch(path: Path, fetch_fn, *, force: bool = False) -> pd.DataFrame
 
 # ── Scoreboard ─────────────────────────────────────────────────────────────────
 
+def _espn_scoreboard(game_date: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Fetch a dated ESPN scoreboard; ESPN game IDs are explicitly prefixed."""
+    from utils.hoopr_fetcher import normalize_abbr_to_nba
+
+    expected_date = datetime.strptime(game_date, "%m/%d/%Y").date()
+    response = requests.get(
+        "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
+        params={"dates": expected_date.strftime("%Y%m%d"), "limit": 100},
+        timeout=15,
+    )
+    response.raise_for_status()
+    games = response.json()["events"]
+    if not isinstance(games, list):
+        raise ValueError("ESPN scoreboard events must be a list")
+    team_ids = {team["abbreviation"]: team for team in nba_teams.get_teams()}
+    rows = []
+    for game in games:
+        actual_date = datetime.fromisoformat(game["date"].replace("Z", "+00:00")).astimezone(_ET).date()
+        if actual_date != expected_date:
+            raise ValueError("ESPN scoreboard event date does not match requested date")
+        competitors = {team["homeAway"]: team["team"] for team in game["competitions"][0]["competitors"]}
+        aliases = {"WSH": "WAS", "UTAH": "UTA"}
+        home_abbr = normalize_abbr_to_nba(competitors["home"]["abbreviation"])
+        away_abbr = normalize_abbr_to_nba(competitors["away"]["abbreviation"])
+        home_abbr = aliases.get(home_abbr, home_abbr)
+        away_abbr = aliases.get(away_abbr, away_abbr)
+        home, away = team_ids[home_abbr], team_ids[away_abbr]
+        status = game["status"]["type"]
+        rows.append({
+            "GAME_ID": f"espn:{game['id']}",
+            "HOME_TEAM_ID": home["id"],
+            "VISITOR_TEAM_ID": away["id"],
+            "HOME_TEAM_ABBREVIATION": home_abbr,
+            "VISITOR_TEAM_ABBREVIATION": away_abbr,
+            "HOME_TEAM_NAME": home["full_name"],
+            "VISITOR_TEAM_NAME": away["full_name"],
+            "GAME_STATUS_TEXT": status["detail"],
+            "GAME_STATUS_ID": {"pre": 1, "in": 2, "post": 3}[status["state"]],
+        })
+    return pd.DataFrame(rows), pd.DataFrame()
+
 @st.cache_data(ttl=300)
 def get_today_scoreboard(game_date: str | None = None, *, strict: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -151,7 +192,14 @@ def get_today_scoreboard(game_date: str | None = None, *, strict: bool = False) 
 
         return pd.DataFrame(rows), pd.DataFrame()
     except Exception:
-        if strict:
+        # Do not interpret provider failure as an authoritative empty schedule.
+        if game_date == _today_et().strftime("%m/%d/%Y"):
+            try:
+                return _espn_scoreboard(game_date)
+            except Exception:
+                if strict:
+                    raise
+        elif strict:
             raise
         return pd.DataFrame(), pd.DataFrame()
 
@@ -175,7 +223,15 @@ def get_league_game_log(season: str, season_type: str = "Regular Season", *, for
         )
         return raw.get_data_frames()[0]
 
-    return _read_or_fetch(path, fetch, force=force)
+    try:
+        return _read_or_fetch(path, fetch, force=force)
+    except Exception:
+        if season != current_season() or season_type != "Regular Season":
+            raise
+        from utils.espn_game_log import get_espn_game_log
+        print("[NBA] League game log unavailable; building ESPN fallback")
+        espn_path = HIST_DIR / f"espn_gamelog_{season.replace('-', '_')}.parquet"
+        return get_espn_game_log(season, espn_path)
 
 
 @st.cache_data(ttl=3600)
