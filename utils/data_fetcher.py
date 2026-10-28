@@ -96,6 +96,46 @@ def _read_or_fetch(path: Path, fetch_fn, *, force: bool = False) -> pd.DataFrame
 
 # ── Scoreboard ─────────────────────────────────────────────────────────────────
 
+def _nba_live_scoreboard(game_date: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Read today's NBA live scoreboard, retaining NBA game and team IDs."""
+    response = requests.get(
+        "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json",
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0) Gecko/20100101 Firefox/158.0",
+            "Referer": "https://www.nba.com/",
+        },
+        timeout=15,
+    )
+    response.raise_for_status()
+    scoreboard = response.json()["scoreboard"]
+    requested_date = datetime.strptime(game_date, "%m/%d/%Y").date()
+    if datetime.strptime(scoreboard["gameDate"], "%Y-%m-%d").date() != requested_date:
+        raise ValueError("NBA live scoreboard date does not match requested date")
+    games = scoreboard["games"]
+    if not isinstance(games, list):
+        raise ValueError("NBA live scoreboard games must be a list")
+    rows = []
+    for game in games:
+        home, away = game["homeTeam"], game["awayTeam"]
+        game_id = game["gameId"]
+        if (not isinstance(game_id, str) or len(game_id) != 10 or not game_id.isdigit()
+                or not home["teamId"] or not away["teamId"]
+                or not home["teamTricode"] or not away["teamTricode"]):
+            raise ValueError("NBA live scoreboard contains invalid game or team IDs")
+        rows.append({
+            "GAME_ID": game_id,
+            "HOME_TEAM_ID": home["teamId"],
+            "VISITOR_TEAM_ID": away["teamId"],
+            "HOME_TEAM_ABBREVIATION": home["teamTricode"],
+            "VISITOR_TEAM_ABBREVIATION": away["teamTricode"],
+            "HOME_TEAM_NAME": f"{home['teamCity']} {home['teamName']}",
+            "VISITOR_TEAM_NAME": f"{away['teamCity']} {away['teamName']}",
+            "GAME_STATUS_TEXT": game["gameStatusText"],
+            "GAME_STATUS_ID": game["gameStatus"],
+        })
+    return pd.DataFrame(rows), pd.DataFrame()
+
+
 def _espn_scoreboard(game_date: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Fetch a dated ESPN scoreboard; ESPN game IDs are explicitly prefixed."""
     from utils.hoopr_fetcher import normalize_abbr_to_nba
@@ -143,7 +183,7 @@ def get_today_scoreboard(game_date: str | None = None, *, strict: bool = False) 
     Fetch scoreboard for today or a given date (MM/DD/YYYY).
     Returns (game_header_df, line_score_df).  Cached for 5 minutes.
 
-    Uses ScoreboardV3 which is fully supported for the 2025-26 season.
+    Uses ScoreboardV3; for today's date falls back to the NBA live feed and ESPN.
     game_header columns: GAME_ID, HOME_TEAM_ID, VISITOR_TEAM_ID,
         HOME_TEAM_NAME, VISITOR_TEAM_NAME, HOME_TEAM_ABBREVIATION,
         VISITOR_TEAM_ABBREVIATION, GAME_STATUS_TEXT, GAME_STATUS_ID
@@ -194,6 +234,10 @@ def get_today_scoreboard(game_date: str | None = None, *, strict: bool = False) 
     except Exception:
         # Do not interpret provider failure as an authoritative empty schedule.
         if game_date == _today_et().strftime("%m/%d/%Y"):
+            try:
+                return _nba_live_scoreboard(game_date)
+            except Exception:
+                pass  # The live feed may be unavailable or stale; try ESPN.
             try:
                 return _espn_scoreboard(game_date)
             except Exception:

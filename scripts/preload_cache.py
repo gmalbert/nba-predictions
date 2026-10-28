@@ -165,12 +165,49 @@ def refresh_hoopr_data():
 
 # ── Step 5: Game predictions ──────────────────────────────────────────────────
 
+def _upgrade_cached_prediction_ids(path: Path) -> bool:
+    """Replace ESPN IDs in today's cached predictions when NBA IDs are available."""
+    from utils.data_fetcher import _nba_live_scoreboard
+
+    cached = pd.read_parquet(path)
+    if not {"game_id", "home_team_id", "away_team_id"}.issubset(cached.columns):
+        return False
+    needs_id = cached["game_id"].astype(str).str.startswith("espn:")
+    if not needs_id.any():
+        return False
+    live, _ = _nba_live_scoreboard(datetime.strptime(TODAY, "%Y-%m-%d").strftime("%m/%d/%Y"))
+    if live.empty:
+        return False
+    mapping = {}
+    for _, game in live.iterrows():
+        key = (int(game["HOME_TEAM_ID"]), int(game["VISITOR_TEAM_ID"]))
+        if key in mapping:
+            raise ValueError("NBA live scoreboard contains duplicate team matchups")
+        mapping[key] = game["GAME_ID"]
+    replacements = []
+    for _, game in cached[needs_id].iterrows():
+        key = (int(game["home_team_id"]), int(game["away_team_id"]))
+        if key not in mapping:
+            return False
+        replacements.append(mapping[key])
+    cached.loc[needs_id, "game_id"] = replacements
+    temporary = path.with_suffix(".parquet.tmp")
+    cached.to_parquet(temporary, index=False)
+    temporary.replace(path)
+    return True
+
+
 def refresh_predictions(hist_dir: Path):
     """Pre-run today's prediction pipeline and save to disk."""
     from utils.data_fetcher import run_and_cache_predictions
 
     path = hist_dir / f"predictions_{TODAY}.parquet"
     if path.exists():
+        try:
+            if _upgrade_cached_prediction_ids(path):
+                log.info("  [predictions] updated cached game IDs from the NBA scoreboard")
+        except Exception as exc:
+            log.warning(f"  [predictions] could not update cached NBA game IDs: {exc}")
         log.info("  [predictions] already cached for today — skipping")
         return
 

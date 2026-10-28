@@ -5,6 +5,7 @@ on:
     paths:
       - 'scripts/export_best_bets.py'
       - 'scripts/preload_cache.py'
+      - 'scripts/scrape_external.py'
       - 'utils/data_fetcher.py'
       - 'utils/prediction_engine.py'
       - 'tests/**'
@@ -22,8 +23,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install pandas pyarrow numpy requests streamlit nba_api
+      - run: pip install pandas pyarrow numpy requests streamlit nba_api beautifulsoup4
       - run: python -m unittest discover -s tests -v
+      - name: Verify NBA live scoreboard on runner
+        run: |
+          python -c "from utils.data_fetcher import _nba_live_scoreboard, _today_et; games, _ = _nba_live_scoreboard(_today_et().strftime('%m/%d/%Y')); print(f'NBA live scoreboard: {len(games)} games')"
       - name: Verify ESPN scoreboard on runner
         run: |
           python -c "from utils.data_fetcher import _espn_scoreboard, _today_et; games, _ = _espn_scoreboard(_today_et().strftime('%m/%d/%Y')); print(f'ESPN scoreboard: {len(games)} games')"
