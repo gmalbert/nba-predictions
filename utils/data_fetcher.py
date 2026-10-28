@@ -192,8 +192,7 @@ def get_today_scoreboard(game_date: str | None = None, *, strict: bool = False) 
 
         return pd.DataFrame(rows), pd.DataFrame()
     except Exception:
-        # The live feed only covers the current Eastern date. Never interpret a
-        # stale feed or provider failure as an authoritative empty schedule.
+        # Do not interpret provider failure as an authoritative empty schedule.
         if game_date == _today_et().strftime("%m/%d/%Y"):
             try:
                 return _espn_scoreboard(game_date)
@@ -224,7 +223,15 @@ def get_league_game_log(season: str, season_type: str = "Regular Season", *, for
         )
         return raw.get_data_frames()[0]
 
-    return _read_or_fetch(path, fetch, force=force)
+    try:
+        return _read_or_fetch(path, fetch, force=force)
+    except Exception:
+        if season != current_season() or season_type != "Regular Season":
+            raise
+        from utils.espn_game_log import get_espn_game_log
+        print("[NBA] League game log unavailable; building ESPN fallback")
+        espn_path = HIST_DIR / f"espn_gamelog_{season.replace('-', '_')}.parquet"
+        return get_espn_game_log(season, espn_path)
 
 
 @st.cache_data(ttl=3600)
