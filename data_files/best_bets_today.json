@@ -1,117 +1,12 @@
 {
   "meta": {
     "sport": "NBA",
-    "generated_at": "2026-11-25T19:44:22.282215+00:00",
+    "generated_at": "2026-11-26T19:24:13.167601+00:00",
     "model_version": "1.0.0",
     "season": "2026-27",
-    "status": "ok",
-    "tier_definition": "edge-v1"
+    "status": "no_picks",
+    "tier_definition": "edge-v1",
+    "notes": "No NBA games in prediction artifact for 2026-11-26"
   },
-  "bets": [
-    {
-      "game_date": "2026-11-25",
-      "game_time": null,
-      "game": "Miami Heat @ Philadelphia 76ers",
-      "home_team": "Philadelphia 76ers",
-      "away_team": "Miami Heat",
-      "bet_type": "Moneyline",
-      "pick": "Philadelphia 76ers",
-      "confidence": 0.635,
-      "edge": null,
-      "tier": "Standard",
-      "odds": null,
-      "line": null,
-      "notes": null
-    },
-    {
-      "game_date": "2026-11-25",
-      "game_time": null,
-      "game": "Chicago Bulls @ Charlotte Hornets",
-      "home_team": "Charlotte Hornets",
-      "away_team": "Chicago Bulls",
-      "bet_type": "Moneyline",
-      "pick": "Charlotte Hornets",
-      "confidence": 0.528,
-      "edge": null,
-      "tier": "Standard",
-      "odds": null,
-      "line": null,
-      "notes": null
-    },
-    {
-      "game_date": "2026-11-25",
-      "game_time": null,
-      "game": "Cleveland Cavaliers @ New York Knicks",
-      "home_team": "New York Knicks",
-      "away_team": "Cleveland Cavaliers",
-      "bet_type": "Moneyline",
-      "pick": "New York Knicks",
-      "confidence": 0.719,
-      "edge": null,
-      "tier": "Standard",
-      "odds": null,
-      "line": null,
-      "notes": null
-    },
-    {
-      "game_date": "2026-11-25",
-      "game_time": null,
-      "game": "LA Clippers @ Memphis Grizzlies",
-      "home_team": "Memphis Grizzlies",
-      "away_team": "LA Clippers",
-      "bet_type": "Moneyline",
-      "pick": "Memphis Grizzlies",
-      "confidence": 0.72,
-      "edge": null,
-      "tier": "Standard",
-      "odds": null,
-      "line": null,
-      "notes": null
-    },
-    {
-      "game_date": "2026-11-25",
-      "game_time": null,
-      "game": "Brooklyn Nets @ Milwaukee Bucks",
-      "home_team": "Milwaukee Bucks",
-      "away_team": "Brooklyn Nets",
-      "bet_type": "Moneyline",
-      "pick": "Brooklyn Nets",
-      "confidence": 0.618,
-      "edge": null,
-      "tier": "Standard",
-      "odds": null,
-      "line": null,
-      "notes": null
-    },
-    {
-      "game_date": "2026-11-25",
-      "game_time": null,
-      "game": "Phoenix Suns @ Houston Rockets",
-      "home_team": "Houston Rockets",
-      "away_team": "Phoenix Suns",
-      "bet_type": "Moneyline",
-      "pick": "Houston Rockets",
-      "confidence": 0.578,
-      "edge": null,
-      "tier": "Standard",
-      "odds": null,
-      "line": null,
-      "notes": null
-    },
-    {
-      "game_date": "2026-11-25",
-      "game_time": null,
-      "game": "Sacramento Kings @ Golden State Warriors",
-      "home_team": "Golden State Warriors",
-      "away_team": "Sacramento Kings",
-      "bet_type": "Moneyline",
-      "pick": "Golden State Warriors",
-      "confidence": 0.756,
-      "edge": null,
-      "tier": "Standard",
-      "odds": null,
-      "line": null,
-      "notes": null
-    }
-  ]
+  "bets": []
 }
